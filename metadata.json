@@ -1,0 +1,5 @@
+{
+  "name": "FF Level Up Bot",
+  "description": "A management dashboard for FF Level Up bot instances, allowing users to launch and delete friend-adding tasks via external APIs.",
+  "requestFramePermissions": []
+}
