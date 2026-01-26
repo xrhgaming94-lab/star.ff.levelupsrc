@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2, Download, Upload } from 'lucide-react';
 import { getStoredUsers, createUser, deleteUser, getAppConfig, saveAppConfig } from '../services/auth';
 import { User, BotConfig } from '../types';
 import ExpiryTimer from './ExpiryTimer';
@@ -42,6 +42,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   // Modal State
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
+  // Backup Input Ref
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     refreshUsers();
     const config = getAppConfig();
@@ -57,7 +60,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate delay
+    // Direct save without artificial delay
     saveAppConfig({ 
         contactLink,
         youtubeLink,
@@ -86,8 +89,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!username || !password) {
+        alert("Username and Password are required");
+        return;
+    }
+
     setIsCreating(true);
-    await new Promise(resolve => setTimeout(resolve, 600)); // Simulate delay
 
     try {
       const expiryTime = Date.now() + 
@@ -104,7 +111,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         allowedBots: bots
       };
 
+      // Create immediately
       createUser(newUser);
+      
+      // Update UI immediately
       refreshUsers();
       
       // Reset sensitive fields but keep config for easy reuse
@@ -125,12 +135,56 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
+  // Backup & Restore Logic
+  const handleBackup = () => {
+    const dataStr = JSON.stringify(users, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ff-bot-users-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleRestoreClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = event.target?.result as string;
+        const parsedUsers = JSON.parse(json);
+        
+        if (!Array.isArray(parsedUsers)) throw new Error("Invalid file format");
+        
+        // Basic validation of user object structure could go here
+        
+        // Save to local storage (overwrites current)
+        localStorage.setItem("ff_bot_users", JSON.stringify(parsedUsers));
+        refreshUsers();
+        alert(`Successfully restored ${parsedUsers.length} users.`);
+      } catch (err) {
+        alert("Failed to restore users. Invalid JSON file.");
+      }
+      // Reset input
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <div className="min-h-screen bg-gaming-dark text-slate-200 p-4 md:p-8 flex flex-col">
       <div className="max-w-7xl mx-auto space-y-8 flex-grow w-full">
         
         {/* Header */}
-        <div className="flex justify-between items-center border-b border-slate-700 pb-6">
+        <div className="flex flex-col md:flex-row justify-between items-center border-b border-slate-700 pb-6 gap-4">
           <div className="flex items-center gap-3">
             <div className="bg-purple-600/20 p-3 rounded-xl border border-purple-500/30">
               <Shield size={32} className="text-purple-400" />
@@ -140,9 +194,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
               <p className="text-sm text-slate-500 font-mono">User Management System</p>
             </div>
           </div>
-          <button onClick={onLogout} className="flex items-center gap-2 bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors cursor-pointer active:scale-95">
-            <LogOut size={18} /> Logout
-          </button>
+          <div className="flex gap-2">
+            <button onClick={handleBackup} className="flex items-center gap-2 bg-blue-500/10 text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-500/20 transition-colors cursor-pointer active:scale-95 border border-blue-500/20">
+              <Download size={18} /> Backup
+            </button>
+            <button onClick={handleRestoreClick} className="flex items-center gap-2 bg-green-500/10 text-green-400 px-4 py-2 rounded-lg hover:bg-green-500/20 transition-colors cursor-pointer active:scale-95 border border-green-500/20">
+              <Upload size={18} /> Restore
+            </button>
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleRestoreFile} 
+              accept=".json" 
+              className="hidden" 
+            />
+            <button onClick={onLogout} className="flex items-center gap-2 bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors cursor-pointer active:scale-95 ml-2">
+              <LogOut size={18} /> Logout
+            </button>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">

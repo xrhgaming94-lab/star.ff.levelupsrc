@@ -8,9 +8,13 @@ const CONFIG_KEY = "ff_bot_config";
 
 // --- App Config Logic ---
 export const getAppConfig = (): AppConfig => {
-  const stored = localStorage.getItem(CONFIG_KEY);
-  // Default to a generic placeholder if not set
-  return stored ? JSON.parse(stored) : { contactLink: '#' };
+  try {
+    const stored = localStorage.getItem(CONFIG_KEY);
+    // Default to a generic placeholder if not set
+    return stored ? JSON.parse(stored) : { contactLink: '#' };
+  } catch (e) {
+    return { contactLink: '#' };
+  }
 };
 
 export const saveAppConfig = (config: AppConfig) => {
@@ -19,12 +23,28 @@ export const saveAppConfig = (config: AppConfig) => {
 
 // --- User Logic ---
 export const getStoredUsers = (): User[] => {
-  const stored = localStorage.getItem(USERS_STORAGE_KEY);
-  return stored ? JSON.parse(stored) : [];
+  try {
+    const stored = localStorage.getItem(USERS_STORAGE_KEY);
+    if (!stored) return [];
+    const users = JSON.parse(stored);
+    // Safety check: ensure it is an array
+    if (!Array.isArray(users)) {
+        return [];
+    }
+    return users;
+  } catch (error) {
+    console.error("Failed to parse stored users", error);
+    return [];
+  }
 };
 
 const saveUsers = (users: User[]) => {
-  localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+  try {
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+  } catch (e) {
+    console.error("Storage failed", e);
+    alert("Failed to save user! LocalStorage might be full.");
+  }
 };
 
 export const login = (username: string, password: string): { success: boolean; user?: CurrentUser; message?: string } => {
@@ -56,16 +76,21 @@ export const logout = () => {
 };
 
 export const getSession = (): CurrentUser | null => {
-  const session = localStorage.getItem(SESSION_KEY);
-  if (!session) return null;
-  const user = JSON.parse(session);
-  
-  // Re-check expiry if it's a regular user
-  if (user.role === 'user' && Date.now() > (user as User).expiryDate) {
+  try {
+    const session = localStorage.getItem(SESSION_KEY);
+    if (!session) return null;
+    const user = JSON.parse(session);
+    
+    // Re-check expiry if it's a regular user
+    if (user.role === 'user' && Date.now() > (user as User).expiryDate) {
+      logout();
+      return null;
+    }
+    return user;
+  } catch (e) {
     logout();
     return null;
   }
-  return user;
 };
 
 // Admin Functions
