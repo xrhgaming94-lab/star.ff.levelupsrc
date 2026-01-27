@@ -177,27 +177,25 @@ export const restoreUsers = async (users: User[]) => {
     }
 };
 
-// --- Data Persistence Logic (New) ---
+// --- Data Persistence Logic (Updated for Safety) ---
 
 export const fetchUserSession = async (username: string): Promise<{ instances: Instance[], logs: LogEntry[] }> => {
   await ensureAuth();
-  try {
-    const sName = sanitize(username);
-    const dbRef = ref(db);
-    
-    const [instSnap, logSnap] = await Promise.all([
-      get(child(dbRef, `users/${sName}/instances`)),
-      get(child(dbRef, `users/${sName}/logs`))
-    ]);
+  
+  // We do NOT try/catch here to mask errors. If DB is unreachable, we want the UI to know
+  // so it doesn't assume empty data and overwrite valid data.
+  const sName = sanitize(username);
+  const dbRef = ref(db);
+  
+  const [instSnap, logSnap] = await Promise.all([
+    get(child(dbRef, `users/${sName}/instances`)),
+    get(child(dbRef, `users/${sName}/logs`))
+  ]);
 
-    return {
-      instances: instSnap.exists() ? instSnap.val() : [],
-      logs: logSnap.exists() ? logSnap.val() : []
-    };
-  } catch (error) {
-    console.error("Error fetching session data", error);
-    return { instances: [], logs: [] };
-  }
+  return {
+    instances: instSnap.exists() ? instSnap.val() : [],
+    logs: logSnap.exists() ? logSnap.val() : []
+  };
 };
 
 export const saveUserInstances = async (username: string, instances: Instance[]) => {

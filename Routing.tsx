@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Play, Cpu, LogOut, ChevronDown, Loader2, Server } from 'lucide-react';
+import { Play, Cpu, LogOut, ChevronDown, Loader2, Server, CloudOff } from 'lucide-react';
 import { Instance, LogEntry, CurrentUser, User } from './types';
 import { launchInstanceApi, deleteInstanceApi } from './services/api';
 import { getSession, logout, fetchUserSession, saveUserInstances, saveUserLogs } from './services/auth';
@@ -19,8 +19,10 @@ const Routing: React.FC = () => {
   const [selectedBotIndex, setSelectedBotIndex] = useState(0);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isDataLoaded, setIsDataLoaded] = useState(false); // New flag to prevent overwriting DB on load
+  
+  const [isLoading, setIsLoading] = useState(false); // For launch action
+  const [isSessionLoading, setIsSessionLoading] = useState(false); // For initial data fetch
+  const [sessionError, setSessionError] = useState(false); // If fetch fails
 
   // Check session on load
   useEffect(() => {
@@ -34,36 +36,30 @@ const Routing: React.FC = () => {
   useEffect(() => {
     const loadData = async () => {
       if (currentUser && currentUser.role === 'user') {
-        setIsDataLoaded(false); // Reset loaded flag
+        setIsSessionLoading(true);
+        setSessionError(false);
         try {
           const data = await fetchUserSession(currentUser.username);
           setInstances(data.instances || []);
           setLogs(data.logs || []);
         } catch (e) {
           console.error("Failed to load session data", e);
+          setSessionError(true);
+          // We DO NOT set instances to [] here to avoid saving empty state over valid data later
         } finally {
-          setIsDataLoaded(true); // Allow saving after load is complete
+          setIsSessionLoading(false);
         }
-      } else {
-        setIsDataLoaded(false);
       }
     };
-    loadData();
+    
+    if (currentUser) {
+        loadData();
+    }
   }, [currentUser]);
 
-  // Save Instances to Firebase whenever they change
-  useEffect(() => {
-    if (currentUser && currentUser.role === 'user' && isDataLoaded) {
-      saveUserInstances(currentUser.username, instances);
-    }
-  }, [instances, currentUser, isDataLoaded]);
-
-  // Save Logs to Firebase whenever they change
-  useEffect(() => {
-    if (currentUser && currentUser.role === 'user' && isDataLoaded) {
-      saveUserLogs(currentUser.username, logs);
-    }
-  }, [logs, currentUser, isDataLoaded]);
+  // NOTE: We removed the useEffect hooks that auto-saved data. 
+  // We now explicitly call saveUserInstances and saveUserLogs only when actions occur.
+  // This prevents accidental deletion of data on page reload.
 
   const handleLogin = (user: CurrentUser) => {
     setCurrentUser(user);
@@ -72,26 +68,39 @@ const Routing: React.FC = () => {
   const handleLogout = () => {
     logout();
     setCurrentUser(null);
-    setInstances([]); // Clear instances on logout
+    setInstances([]); 
     setLogs([]);
-    setIsDataLoaded(false);
+    setSessionError(false);
   };
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
-    const newLog: LogEntry = {
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toLocaleTimeString(),
-      message,
-      type
-    };
-    setLogs(prev => [...prev, newLog]);
-  }, []);
+    setLogs(prev => {
+        const newLog: LogEntry = {
+            id: Math.random().toString(36).substr(2, 9),
+            timestamp: new Date().toLocaleTimeString(),
+            message,
+            type
+        };
+        const updatedLogs = [...prev, newLog];
+        
+        // Explicit Save: Only save if we have a valid user and no session error
+        if (currentUser && currentUser.role === 'user') {
+            saveUserLogs(currentUser.username, updatedLogs);
+        }
+        return updatedLogs;
+    });
+  }, [currentUser]);
 
   const handleLaunch = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Type guard
+    // Type guard & Safety check
     if (!currentUser || currentUser.role !== 'user') return;
+    if (sessionError) {
+        alert("Cannot launch: Database connection failed. Please refresh.");
+        return;
+    }
+
     const user = currentUser as User;
 
     // Handle Legacy Data fallback
@@ -139,7 +148,13 @@ const Routing: React.FC = () => {
         startedAt: new Date().toLocaleTimeString()
       };
 
-      setInstances(prev => [newInstance, ...prev]);
+      // Explicit Save Logic
+      setInstances(prev => {
+          const updated = [newInstance, ...prev];
+          saveUserInstances(user.username, updated); // Save to DB
+          return updated;
+      });
+
       addLog(`SUCCESS: ${responseMsg}`, "success");
       addLog(`Instance launched. Bot: ${selectedBot.name} | Target: ${targetUid}`, "success");
       setTargetUid(''); // Clear input
@@ -152,6 +167,8 @@ const Routing: React.FC = () => {
 
   const handleDelete = async (id: string, uid: string) => {
     if (!currentUser || currentUser.role !== 'user') return;
+    if (sessionError) return;
+    
     const user = currentUser as User;
     
     const instanceToRemove = instances.find(i => i.id === id);
@@ -166,20 +183,34 @@ const Routing: React.FC = () => {
 
     const botConfig = availableBots.find(b => b.name === instanceToRemove.botName) || availableBots[0];
 
-    // Mark as removing immediately in UI
-    setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'removing' } : i));
+    // Mark as removing immediately in UI AND SAVE to DB so it persists on refresh
+    setInstances(prev => {
+        const updated = prev.map(i => i.id === id ? { ...i, status: 'removing' as const } : i);
+        saveUserInstances(user.username, updated);
+        return updated;
+    });
+    
     addLog(`Initiating termination sequence for UID: ${uid}...`, "warning");
 
     try {
       const responseMsg = await deleteInstanceApi(uid, botConfig.removeApiUrl);
       addLog(`Terminated: ${responseMsg}`, "info");
       
-      // Remove from list
-      setInstances(prev => prev.filter(i => i.id !== id));
+      // Remove from list explicitly and SAVE
+      setInstances(prev => {
+          const updated = prev.filter(i => i.id !== id);
+          saveUserInstances(user.username, updated);
+          return updated;
+      });
       addLog(`Instance ${id} removed successfully.`, "success");
     } catch (error: any) {
       addLog(`Failed to terminate instance remotely: ${error.message}`, "error");
-      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
+      // Revert status to error
+      setInstances(prev => {
+          const updated = prev.map(i => i.id === id ? { ...i, status: 'error' as const } : i);
+          saveUserInstances(user.username, updated);
+          return updated;
+      });
     }
   };
 
@@ -205,6 +236,15 @@ const Routing: React.FC = () => {
 
   const limit = user.maxInstances || user.config?.maxInstances || 1;
 
+  if (isSessionLoading) {
+      return (
+          <div className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center text-slate-300 gap-4">
+              <Loader2 size={40} className="animate-spin text-cyan-400" />
+              <div className="font-mono text-sm tracking-widest uppercase">Syncing with Server...</div>
+          </div>
+      );
+  }
+
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200 font-sans selection:bg-cyan-400 selection:text-black flex flex-col items-center p-4">
       
@@ -219,13 +259,31 @@ const Routing: React.FC = () => {
         </div>
       </div>
 
+      {sessionError && (
+          <div className="w-full max-w-4xl mb-6 bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-xl flex items-center justify-between animate-pulse">
+              <div className="flex items-center gap-3">
+                  <CloudOff size={24} />
+                  <div>
+                      <h3 className="font-bold">Connection Failed</h3>
+                      <p className="text-xs">Could not load your saved instances. Data is safe but hidden.</p>
+                  </div>
+              </div>
+              <button 
+                onClick={() => window.location.reload()}
+                className="bg-red-500/20 hover:bg-red-500/30 px-3 py-1.5 rounded text-xs font-bold uppercase transition-colors"
+              >
+                  Retry
+              </button>
+          </div>
+      )}
+
       <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-12 gap-8">
         
         {/* CENTER COLUMN: LAUNCH INSTANCE & CONSOLE */}
         <div className="lg:col-span-6 space-y-6 flex flex-col">
             
             {/* 2. LAUNCH INSTANCE SECTION (NICHE) */}
-            <div className="bg-slate-900/50 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm relative flex-shrink-0">
+            <div className={`bg-slate-900/50 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl backdrop-blur-sm relative flex-shrink-0 ${sessionError ? 'opacity-50 pointer-events-none' : ''}`}>
                 {/* Decorative glow */}
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-gradient-to-r from-cyan-500 to-purple-500 shadow-[0_0_10px_#22d3ee]"></div>
 
@@ -321,7 +379,7 @@ const Routing: React.FC = () => {
             </div>
 
             {/* 3. ACTIVE INSTANCES LIST */}
-            <div className="bg-slate-900/30 border border-slate-700/50 rounded-2xl p-4 min-h-[300px]">
+            <div className={`bg-slate-900/30 border border-slate-700/50 rounded-2xl p-4 min-h-[300px] ${sessionError ? 'opacity-50' : ''}`}>
                 <ActiveInstances instances={instances} onDelete={handleDelete} />
             </div>
 
