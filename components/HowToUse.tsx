@@ -84,10 +84,10 @@ const HowToUse: React.FC = () => {
           <div>
             <h3 className="font-bold text-slate-200 text-sm group-hover:text-yellow-300 transition-colors">3. Send Command</h3>
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Go to the bot's Whisper (private chat) and send the team code with the prefix <code>/xr</code>.
+              Go to the bot's Whisper (private chat) and send the team code with the prefix <code>/star</code>.
             </p>
             <div className="mt-2 bg-black/40 p-2 rounded border border-slate-700 font-mono text-xs text-yellow-300 inline-block">
-              /xr&lt;TeamCode&gt; <span className="text-slate-600 mx-2">//</span> Example: /xr2839738
+              /star&lt;TeamCode&gt; <span className="text-slate-600 mx-2">//</span> Example: /star2839738
             </div>
           </div>
         </div>
