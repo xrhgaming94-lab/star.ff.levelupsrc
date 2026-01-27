@@ -1,4 +1,4 @@
-import { User, Admin, CurrentUser, AppConfig } from '../types';
+import { User, Admin, CurrentUser, AppConfig, Instance, LogEntry } from '../types';
 import { db, auth } from './firebase';
 import { ref, get, set, remove, child, update } from "firebase/database";
 import { signInAnonymously } from "firebase/auth";
@@ -57,7 +57,8 @@ export const saveAppConfig = async (config: AppConfig) => {
 
 // --- User Logic (Firebase) ---
 
-const sanitize = (username: string) => username.replace(/[.#$/[\]]/g, "_");
+// Exported sanitize so it can be used in other files if needed, primarily for key consistency
+export const sanitize = (username: string) => username.replace(/[.#$/[\]]/g, "_");
 
 export const fetchUsers = async (): Promise<User[]> => {
   await ensureAuth();
@@ -174,4 +175,49 @@ export const restoreUsers = async (users: User[]) => {
     } catch (error) {
         handleFirebaseError(error);
     }
+};
+
+// --- Data Persistence Logic (New) ---
+
+export const fetchUserSession = async (username: string): Promise<{ instances: Instance[], logs: LogEntry[] }> => {
+  await ensureAuth();
+  try {
+    const sName = sanitize(username);
+    const dbRef = ref(db);
+    
+    const [instSnap, logSnap] = await Promise.all([
+      get(child(dbRef, `users/${sName}/instances`)),
+      get(child(dbRef, `users/${sName}/logs`))
+    ]);
+
+    return {
+      instances: instSnap.exists() ? instSnap.val() : [],
+      logs: logSnap.exists() ? logSnap.val() : []
+    };
+  } catch (error) {
+    console.error("Error fetching session data", error);
+    return { instances: [], logs: [] };
+  }
+};
+
+export const saveUserInstances = async (username: string, instances: Instance[]) => {
+  await ensureAuth();
+  try {
+    const sName = sanitize(username);
+    await set(ref(db, `users/${sName}/instances`), instances);
+  } catch (error) {
+    console.error("Error saving instances", error);
+  }
+};
+
+export const saveUserLogs = async (username: string, logs: LogEntry[]) => {
+  await ensureAuth();
+  try {
+    const sName = sanitize(username);
+    // Limit logs to last 50 to prevent DB bloat
+    const slicedLogs = logs.slice(-50); 
+    await set(ref(db, `users/${sName}/logs`), slicedLogs);
+  } catch (error) {
+    console.error("Error saving logs", error);
+  }
 };

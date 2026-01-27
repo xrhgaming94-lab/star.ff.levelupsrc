@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Play, Cpu, LogOut, ChevronDown, Loader2, Server } from 'lucide-react';
 import { Instance, LogEntry, CurrentUser, User } from './types';
 import { launchInstanceApi, deleteInstanceApi } from './services/api';
-import { getSession, logout } from './services/auth';
+import { getSession, logout, fetchUserSession, saveUserInstances, saveUserLogs } from './services/auth';
 import ConsoleLog from './components/ConsoleLog';
 import ActiveInstances from './components/ActiveInstances';
 import HowToUse from './components/HowToUse';
@@ -20,6 +20,7 @@ const Routing: React.FC = () => {
   const [instances, setInstances] = useState<Instance[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isDataLoaded, setIsDataLoaded] = useState(false); // New flag to prevent overwriting DB on load
 
   // Check session on load
   useEffect(() => {
@@ -28,6 +29,41 @@ const Routing: React.FC = () => {
       setCurrentUser(session);
     }
   }, []);
+
+  // Load persistence data from Firebase when user logs in
+  useEffect(() => {
+    const loadData = async () => {
+      if (currentUser && currentUser.role === 'user') {
+        setIsDataLoaded(false); // Reset loaded flag
+        try {
+          const data = await fetchUserSession(currentUser.username);
+          setInstances(data.instances || []);
+          setLogs(data.logs || []);
+        } catch (e) {
+          console.error("Failed to load session data", e);
+        } finally {
+          setIsDataLoaded(true); // Allow saving after load is complete
+        }
+      } else {
+        setIsDataLoaded(false);
+      }
+    };
+    loadData();
+  }, [currentUser]);
+
+  // Save Instances to Firebase whenever they change
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'user' && isDataLoaded) {
+      saveUserInstances(currentUser.username, instances);
+    }
+  }, [instances, currentUser, isDataLoaded]);
+
+  // Save Logs to Firebase whenever they change
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'user' && isDataLoaded) {
+      saveUserLogs(currentUser.username, logs);
+    }
+  }, [logs, currentUser, isDataLoaded]);
 
   const handleLogin = (user: CurrentUser) => {
     setCurrentUser(user);
@@ -38,6 +74,7 @@ const Routing: React.FC = () => {
     setCurrentUser(null);
     setInstances([]); // Clear instances on logout
     setLogs([]);
+    setIsDataLoaded(false);
   };
 
   const addLog = useCallback((message: string, type: LogEntry['type'] = 'info') => {
