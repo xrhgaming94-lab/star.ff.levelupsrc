@@ -6,11 +6,8 @@ import { signInAnonymously } from "firebase/auth";
 const ADMIN_USER = "staradmin";
 const ADMIN_PASS = "Star12341234";
 const SESSION_KEY = "ff_bot_session";
-const CONFIG_KEY = "ff_bot_config";
 
 // --- Helper: Ensure Auth ---
-// We attempt to sign in, but if it fails (e.g. provider disabled), we proceed anyway
-// because the database rules are likely public.
 const ensureAuth = async () => {
   if (!auth.currentUser) {
     try {
@@ -23,31 +20,43 @@ const ensureAuth = async () => {
 
 const handleFirebaseError = (error: any) => {
   console.error("Firebase Error:", error);
-  // Only alert if it's genuinely a permission issue preventing access
   if (error.code === 'PERMISSION_DENIED' || error.message?.includes('Permission denied')) {
      alert("⚠️ FIREBASE CONNECTION ERROR ⚠️\n\nThe app cannot connect to the database.\n\n1. Check your internet.\n2. In Firebase Console > Realtime Database > Rules, ensure they are:\n\n{\n  \"rules\": {\n    \".read\": true,\n    \".write\": true\n  }\n}");
   }
-  // Don't throw, return empty/false to prevent app crash
   return null;
 };
 
-// --- App Config Logic ---
-export const getAppConfig = (): AppConfig => {
+// --- App Config Logic (Now Global via Firebase) ---
+// Fetches config from 'system_config' node in DB
+export const fetchAppConfig = async (): Promise<AppConfig> => {
+  await ensureAuth();
   try {
-    const stored = localStorage.getItem(CONFIG_KEY);
-    return stored ? JSON.parse(stored) : { contactLink: '#' };
+    const dbRef = ref(db);
+    const snapshot = await get(child(dbRef, 'system_config'));
+    if (snapshot.exists()) {
+      return snapshot.val() as AppConfig;
+    } else {
+      return { contactLink: '#', youtubeLink: '#', dashboardInstructions: '' };
+    }
   } catch (e) {
-    return { contactLink: '#' };
+    console.error("Failed to fetch config", e);
+    return { contactLink: '#', youtubeLink: '#', dashboardInstructions: '' };
   }
 };
 
-export const saveAppConfig = (config: AppConfig) => {
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+// Saves config to 'system_config' node in DB
+export const saveAppConfig = async (config: AppConfig) => {
+  await ensureAuth();
+  try {
+    await set(ref(db, 'system_config'), config);
+  } catch (error) {
+    handleFirebaseError(error);
+    throw error;
+  }
 };
 
 // --- User Logic (Firebase) ---
 
-// Helper to sanitize username for Firebase paths (remove illegal chars)
 const sanitize = (username: string) => username.replace(/[.#$/[\]]/g, "_");
 
 export const fetchUsers = async (): Promise<User[]> => {
@@ -77,7 +86,6 @@ export const login = async (username: string, password: string): Promise<{ succe
 
   await ensureAuth();
 
-  // Check Users in Firebase
   try {
     const dbRef = ref(db);
     const sanitizedName = sanitize(username);
@@ -87,12 +95,9 @@ export const login = async (username: string, password: string): Promise<{ succe
       const user = snapshot.val() as User;
       
       if (user.password === password) {
-        // Check Expiry
         if (Date.now() > user.expiryDate) {
            return { success: false, message: "Account Expired. Contact Admin." };
         }
-        
-        // Save session locally for persistence on refresh
         localStorage.setItem(SESSION_KEY, JSON.stringify(user));
         return { success: true, user };
       } else {
@@ -103,7 +108,6 @@ export const login = async (username: string, password: string): Promise<{ succe
     }
   } catch (error) {
     console.error("Login DB error", error);
-    // If handleFirebaseError returns null/void, we construct a message
     const errMsg = (error as any).code === 'PERMISSION_DENIED' ? "Database Locked (Check Rules)" : "Connection failed";
     return { success: false, message: errMsg };
   }
@@ -119,7 +123,6 @@ export const getSession = (): CurrentUser | null => {
     if (!session) return null;
     const user = JSON.parse(session);
     
-    // Re-check expiry if it's a regular user
     if (user.role === 'user' && Date.now() > (user as User).expiryDate) {
       logout();
       return null;
@@ -131,14 +134,12 @@ export const getSession = (): CurrentUser | null => {
   }
 };
 
-// Admin Functions (Async)
 export const createUser = async (user: User) => {
   await ensureAuth();
   try {
       const sanitizedName = sanitize(user.username);
       const userRef = ref(db, 'users/' + sanitizedName);
       
-      // Check existence first
       const snapshot = await get(userRef);
       if (snapshot.exists()) {
           throw new Error("Username already exists");
@@ -147,7 +148,7 @@ export const createUser = async (user: User) => {
       await set(userRef, user);
   } catch (error) {
       handleFirebaseError(error);
-      throw error; // Re-throw for UI to show error
+      throw error;
   }
 };
 
@@ -161,7 +162,6 @@ export const deleteUser = async (username: string) => {
   }
 };
 
-// For restoring backup
 export const restoreUsers = async (users: User[]) => {
     await ensureAuth();
     try {

@@ -1,15 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { BookOpen, Gamepad2, UserCheck, MessageSquare, AlertOctagon, AlertTriangle, Youtube } from 'lucide-react';
-import { getAppConfig } from '../services/auth';
+import { fetchAppConfig } from '../services/auth';
 
 const HowToUse: React.FC = () => {
   const [customInstructions, setCustomInstructions] = useState('');
   const [youtubeLink, setYoutubeLink] = useState('#');
 
   useEffect(() => {
-    const config = getAppConfig();
-    setCustomInstructions(config.dashboardInstructions || '');
-    setYoutubeLink(config.youtubeLink || '#');
+    const loadConfig = async () => {
+      const config = await fetchAppConfig();
+      setCustomInstructions(config.dashboardInstructions || '');
+      setYoutubeLink(config.youtubeLink || '#');
+    };
+    loadConfig();
   }, []);
 
   const renderYouTubeButton = () => (

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ShieldCheck, Lock, User, ExternalLink, Youtube, Loader2, LogIn } from 'lucide-react';
-import { login, getAppConfig } from '../services/auth';
+import { login, fetchAppConfig } from '../services/auth';
 import { CurrentUser } from '../types';
 
 interface LoginProps {
@@ -16,9 +16,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    const config = getAppConfig();
-    setContactLink(config.contactLink || '#');
-    setYoutubeLink(config.youtubeLink || '#');
+    const loadConfig = async () => {
+      const config = await fetchAppConfig();
+      setContactLink(config.contactLink || '#');
+      setYoutubeLink(config.youtubeLink || '#');
+    };
+    loadConfig();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

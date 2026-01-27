@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2, RefreshCw } from 'lucide-react';
-import { fetchUsers, createUser, deleteUser, getAppConfig, saveAppConfig } from '../services/auth';
+import { fetchUsers, createUser, deleteUser, fetchAppConfig, saveAppConfig } from '../services/auth';
 import { User, BotConfig } from '../types';
 import ExpiryTimer from './ExpiryTimer';
 
@@ -45,11 +45,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
   useEffect(() => {
     refreshUsers();
-    const config = getAppConfig();
-    setContactLink(config.contactLink || '');
-    setYoutubeLink(config.youtubeLink || '');
-    setDashboardInstructions(config.dashboardInstructions || '');
+    loadConfig();
   }, []);
+
+  const loadConfig = async () => {
+    try {
+        const config = await fetchAppConfig();
+        setContactLink(config.contactLink || '');
+        setYoutubeLink(config.youtubeLink || '');
+        setDashboardInstructions(config.dashboardInstructions || '');
+    } catch (e) {
+        console.error("Failed to load config", e);
+    }
+  };
 
   const refreshUsers = async () => {
     setIsLoadingUsers(true);
@@ -67,13 +75,18 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-    saveAppConfig({ 
-        contactLink,
-        youtubeLink,
-        dashboardInstructions
-    });
-    setIsSaving(false);
-    alert("System configuration saved!");
+    try {
+        await saveAppConfig({ 
+            contactLink,
+            youtubeLink,
+            dashboardInstructions
+        });
+        alert("System configuration saved to Firebase!");
+    } catch (error) {
+        alert("Failed to save configuration");
+    } finally {
+        setIsSaving(false);
+    }
   };
 
   const handleBotChange = (index: number, field: keyof BotConfig, value: string) => {
