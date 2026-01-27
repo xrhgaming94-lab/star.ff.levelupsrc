@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2, Download, Upload } from 'lucide-react';
-import { getStoredUsers, createUser, deleteUser, getAppConfig, saveAppConfig } from '../services/auth';
+import React, { useState, useEffect } from 'react';
+import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { fetchUsers, createUser, deleteUser, getAppConfig, saveAppConfig } from '../services/auth';
 import { User, BotConfig } from '../types';
 import ExpiryTimer from './ExpiryTimer';
 
@@ -10,6 +10,7 @@ interface AdminPanelProps {
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [users, setUsers] = useState<User[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   
   // System Config State
   const [contactLink, setContactLink] = useState('');
@@ -42,9 +43,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   // Modal State
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
 
-  // Backup Input Ref
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     refreshUsers();
     const config = getAppConfig();
@@ -53,14 +51,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setDashboardInstructions(config.dashboardInstructions || '');
   }, []);
 
-  const refreshUsers = () => {
-    setUsers(getStoredUsers());
+  const refreshUsers = async () => {
+    setIsLoadingUsers(true);
+    try {
+        const fetchedUsers = await fetchUsers();
+        setUsers(fetchedUsers);
+    } catch (error) {
+        console.error(error);
+        alert("Failed to load users from database");
+    } finally {
+        setIsLoadingUsers(false);
+    }
   };
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
-    // Direct save without artificial delay
     saveAppConfig({ 
         contactLink,
         youtubeLink,
@@ -111,16 +117,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         allowedBots: bots
       };
 
-      // Create immediately
-      createUser(newUser);
+      await createUser(newUser);
       
-      // Update UI immediately
-      refreshUsers();
+      // Update UI
+      await refreshUsers();
       
-      // Reset sensitive fields but keep config for easy reuse
+      // Reset sensitive fields
       setUsername('');
       setPassword('');
-      alert("User created successfully!");
+      alert("User created in Firebase successfully!");
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -128,55 +133,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
-  const handleDelete = (username: string) => {
+  const handleDelete = async (username: string) => {
     if (confirm(`Delete user ${username}?`)) {
-      deleteUser(username);
-      refreshUsers();
-    }
-  };
-
-  // Backup & Restore Logic
-  const handleBackup = () => {
-    const dataStr = JSON.stringify(users, null, 2);
-    const blob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `ff-bot-users-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleRestoreClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleRestoreFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
       try {
-        const json = event.target?.result as string;
-        const parsedUsers = JSON.parse(json);
-        
-        if (!Array.isArray(parsedUsers)) throw new Error("Invalid file format");
-        
-        // Basic validation of user object structure could go here
-        
-        // Save to local storage (overwrites current)
-        localStorage.setItem("ff_bot_users", JSON.stringify(parsedUsers));
-        refreshUsers();
-        alert(`Successfully restored ${parsedUsers.length} users.`);
+          await deleteUser(username);
+          await refreshUsers();
       } catch (err) {
-        alert("Failed to restore users. Invalid JSON file.");
+          alert("Failed to delete user");
       }
-      // Reset input
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    };
-    reader.readAsText(file);
+    }
   };
 
   return (
@@ -191,23 +156,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             </div>
             <div>
               <h1 className="text-3xl font-black text-white">ADMIN PANEL</h1>
-              <p className="text-sm text-slate-500 font-mono">User Management System</p>
+              <p className="text-sm text-slate-500 font-mono">Firebase Connected System</p>
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={handleBackup} className="flex items-center gap-2 bg-blue-500/10 text-blue-400 px-4 py-2 rounded-lg hover:bg-blue-500/20 transition-colors cursor-pointer active:scale-95 border border-blue-500/20">
-              <Download size={18} /> Backup
-            </button>
-            <button onClick={handleRestoreClick} className="flex items-center gap-2 bg-green-500/10 text-green-400 px-4 py-2 rounded-lg hover:bg-green-500/20 transition-colors cursor-pointer active:scale-95 border border-green-500/20">
-              <Upload size={18} /> Restore
-            </button>
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              onChange={handleRestoreFile} 
-              accept=".json" 
-              className="hidden" 
-            />
+             <button onClick={refreshUsers} className="p-2 rounded-lg hover:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-white" title="Refresh List">
+                 <RefreshCw size={18} className={isLoadingUsers ? "animate-spin" : ""} />
+             </button>
             <button onClick={onLogout} className="flex items-center gap-2 bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors cursor-pointer active:scale-95 ml-2">
               <LogOut size={18} /> Logout
             </button>
@@ -353,7 +308,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     className={`w-full font-bold py-3 rounded-lg shadow-lg transition-colors flex items-center justify-center gap-2 ${isCreating ? 'bg-purple-800 cursor-wait text-slate-300' : 'bg-purple-600 hover:bg-purple-500 text-white cursor-pointer active:scale-95'}`}
                 >
                   {isCreating ? <Loader2 size={18} className="animate-spin" /> : null}
-                  {isCreating ? "Creating User..." : "Create User"}
+                  {isCreating ? "Creating in Firebase..." : "Create User"}
                 </button>
               </form>
             </div>
@@ -364,7 +319,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             <div className="bg-gaming-panel border border-slate-700 rounded-xl p-6 shadow-xl overflow-hidden">
                <h2 className="text-xl font-bold text-white mb-6 flex items-center gap-2">
                 <Users size={20} className="text-blue-400" />
-                Existing Users
+                Firebase Database Users
               </h2>
 
               <div className="overflow-x-auto">
@@ -379,49 +334,60 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-700 text-sm">
-                    {users.map((user) => (
-                      <tr key={user.username} className="hover:bg-white/5 transition-colors">
-                        <td className="p-4 font-bold text-white">{user.username}</td>
-                        <td className="p-4 text-slate-300">
-                          {user.allowedBots ? (
-                              <div className="flex flex-wrap gap-1">
-                                  {user.allowedBots.slice(0, 2).map((b, i) => (
-                                      <span key={i} className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded">{b.name}</span>
-                                  ))}
-                                  {user.allowedBots.length > 2 && <span className="text-[10px] text-slate-500">+{user.allowedBots.length - 2} more</span>}
-                              </div>
-                          ) : (
-                              <span className="text-xs text-red-500">Legacy Data</span>
-                          )}
-                        </td>
-                        <td className="p-4 text-slate-300">{user.maxInstances || user.config?.maxInstances || 1}</td>
-                        <td className="p-4">
-                          <ExpiryTimer expiryDate={user.expiryDate} />
-                        </td>
-                        <td className="p-4 text-right">
-                          <div className="flex justify-end gap-2">
-                            <button 
-                                onClick={() => setSelectedUser(user)}
-                                className="text-blue-400 hover:text-blue-300 p-2 hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer active:scale-95"
-                                title="View Details & Password"
-                            >
-                                <Eye size={16} />
-                            </button>
-                            <button 
-                                onClick={() => handleDelete(user.username)}
-                                className="text-red-400 hover:text-red-300 p-2 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer active:scale-95"
-                                title="Delete User"
-                            >
-                                <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {users.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="p-8 text-center text-slate-500 italic">No users found. Create one to get started.</td>
-                      </tr>
+                    {isLoadingUsers ? (
+                         <tr>
+                            <td colSpan={5} className="p-8 text-center text-slate-500">
+                                <Loader2 size={24} className="animate-spin mx-auto mb-2" />
+                                Loading from Firebase...
+                            </td>
+                         </tr>
+                    ) : (
+                        <>
+                            {users.map((user) => (
+                              <tr key={user.username} className="hover:bg-white/5 transition-colors">
+                                <td className="p-4 font-bold text-white">{user.username}</td>
+                                <td className="p-4 text-slate-300">
+                                  {user.allowedBots ? (
+                                      <div className="flex flex-wrap gap-1">
+                                          {user.allowedBots.slice(0, 2).map((b, i) => (
+                                              <span key={i} className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded">{b.name}</span>
+                                          ))}
+                                          {user.allowedBots.length > 2 && <span className="text-[10px] text-slate-500">+{user.allowedBots.length - 2} more</span>}
+                                      </div>
+                                  ) : (
+                                      <span className="text-xs text-red-500">Legacy Data</span>
+                                  )}
+                                </td>
+                                <td className="p-4 text-slate-300">{user.maxInstances || user.config?.maxInstances || 1}</td>
+                                <td className="p-4">
+                                  <ExpiryTimer expiryDate={user.expiryDate} />
+                                </td>
+                                <td className="p-4 text-right">
+                                  <div className="flex justify-end gap-2">
+                                    <button 
+                                        onClick={() => setSelectedUser(user)}
+                                        className="text-blue-400 hover:text-blue-300 p-2 hover:bg-blue-500/10 rounded-lg transition-colors cursor-pointer active:scale-95"
+                                        title="View Details & Password"
+                                    >
+                                        <Eye size={16} />
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDelete(user.username)}
+                                        className="text-red-400 hover:text-red-300 p-2 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer active:scale-95"
+                                        title="Delete User"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                            {users.length === 0 && (
+                              <tr>
+                                <td colSpan={5} className="p-8 text-center text-slate-500 italic">No users found in database. Create one to get started.</td>
+                              </tr>
+                            )}
+                        </>
                     )}
                   </tbody>
                 </table>
@@ -431,7 +397,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         </div>
       </div>
 
-      {/* User Details Modal */}
+      {/* User Details Modal (Same as before) */}
       {selectedUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-gaming-panel border border-slate-700 rounded-xl w-full max-w-lg shadow-2xl relative overflow-hidden flex flex-col max-h-[90vh]">

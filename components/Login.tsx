@@ -26,16 +26,18 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
     setIsLoading(true);
 
-    // Simulate network delay for better UX
-    await new Promise(resolve => setTimeout(resolve, 800));
-
-    const result = login(username, password);
-    
-    if (result.success && result.user) {
-      onLogin(result.user);
-    } else {
-      setError(result.message || "Login failed");
-      setIsLoading(false);
+    try {
+        const result = await login(username, password);
+        
+        if (result.success && result.user) {
+          onLogin(result.user);
+        } else {
+          setError(result.message || "Login failed");
+        }
+    } catch (err) {
+        setError("Network error. Please try again.");
+    } finally {
+        setIsLoading(false);
     }
   };
 
