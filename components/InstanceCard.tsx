@@ -56,7 +56,9 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
   };
 
   const loadData = useCallback(async (isAutoRefresh = false) => {
+    // Only show spinner if manual refresh
     if (!isAutoRefresh) setIsRefreshing(true);
+    
     try {
       const lvl = await fetchLevelInfo(instance.targetUid, levelApiUrl);
       if (lvl) {
@@ -70,35 +72,60 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
             onUpdateRef.current(instance.id, { initialSessionExp: current });
         }
 
-        // 2. XP Per Minute Calculation
-        const apiRate = getProp(lvl, ['xp_per_min', 'exp_per_min', 'rate']);
-        let newRate = xpRateRef.current;
+        // 2. XP Per Minute Auto-Calculation
+        // We prioritize local calculation if we have valid data points, as it reflects real-time bot performance better than cached API stats.
+        let calculatedRate = -1;
         
-        if (apiRate !== undefined) {
-             newRate = String(apiRate);
-        } else if (previous > 0 && current > previous && lastFetchTimeRef.current > 0) {
-             const expDiff = current - previous;
-             const timeDiffMs = now - lastFetchTimeRef.current;
-             
-             if (timeDiffMs > 1000) {
-                 const calculatedRate = Math.floor((expDiff / timeDiffMs) * 60000);
-                 if (calculatedRate >= 0) {
-                     newRate = `${calculatedRate}`;
+        if (current > 0) {
+             // Logic: If previous is 0, this is the FIRST fetch on this session.
+             // We cannot calculate speed yet.
+             if (previous === 0) {
+                // Keep existing rate if valid, else set to calculating
+                if (instance.lastKnownRate && instance.lastKnownRate !== "Calculating..." && instance.lastKnownRate !== "--") {
+                    // keep it
+                } else {
+                     setXpRate("Calculating...");
+                }
+                prevExpRef.current = current;
+                lastFetchTimeRef.current = now;
+             } else {
+                 // Second fetch onwards: Calculate diff
+                 const expDiff = current - previous;
+                 const timeDiffMs = now - lastFetchTimeRef.current;
+                 
+                 // Valid calculation only if reasonable time passed (> 5s to avoid jitter)
+                 if (timeDiffMs > 5000) {
+                     // Normalize to per minute
+                     calculatedRate = Math.floor((expDiff / timeDiffMs) * 60000);
+                     
+                     // Update references for next tick
+                     prevExpRef.current = current;
+                     lastFetchTimeRef.current = now;
                  }
              }
-        } else if (xpRateRef.current === "--" && current > 0 && previous === 0) {
-            newRate = "Calculating...";
+        }
+
+        // Determine Final Rate to Display
+        const apiRateRaw = getProp(lvl, ['xp_per_min', 'exp_per_min', 'rate']);
+        const apiRate = apiRateRaw !== undefined ? parseInt(String(apiRateRaw)) : -1;
+
+        let finalRate = xpRateRef.current;
+
+        // Priority 1: Valid Local Calculation (even if 0, it means bot is stopped/waiting)
+        if (calculatedRate >= 0) {
+            finalRate = String(calculatedRate);
+        } 
+        // Priority 2: Valid API Rate
+        else if (apiRate >= 0) {
+            finalRate = String(apiRate);
         }
         
-        if (newRate !== xpRateRef.current) {
-            setXpRate(newRate);
-            if (newRate !== "Calculating..." && newRate !== "--") {
-                onUpdateRef.current(instance.id, { lastKnownRate: newRate });
-            }
+        // Update State if changed
+        if (finalRate !== xpRateRef.current && finalRate !== "--" && finalRate !== "Calculating...") {
+            setXpRate(finalRate);
+            onUpdateRef.current(instance.id, { lastKnownRate: finalRate });
         }
         
-        prevExpRef.current = current;
-        lastFetchTimeRef.current = now;
         setLevelData(lvl);
       }
     } catch (e) {
@@ -106,7 +133,7 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
     } finally {
         if (!isAutoRefresh) setIsRefreshing(false);
     }
-  }, [instance.targetUid, instance.id, levelApiUrl, instance.initialSessionExp]);
+  }, [instance.targetUid, instance.id, levelApiUrl, instance.initialSessionExp, instance.lastKnownRate]);
 
   // Load Profile Image
   useEffect(() => {
@@ -120,9 +147,9 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
       loadData();
   }, [instance.targetUid, bannerApiUrl, loadData]);
 
-  // Auto-refresh Interval
+  // Auto-refresh Interval - 20 SECONDS
   useEffect(() => {
-    const interval = setInterval(() => loadData(true), 60000); 
+    const interval = setInterval(() => loadData(true), 20000); 
     return () => clearInterval(interval);
   }, [loadData]);
 

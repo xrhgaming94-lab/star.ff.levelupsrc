@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Play, Cpu, LogOut, ChevronDown, Loader2, Server, CloudOff } from 'lucide-react';
+import { Play, Cpu, LogOut, ChevronDown, Loader2, Server, CloudOff, ShieldCheck } from 'lucide-react';
 import { Instance, LogEntry, CurrentUser, User, AppConfig } from './types';
 import { launchInstanceApi, deleteInstanceApi } from './services/api';
 import { getSession, logout, fetchUserSession, saveUserInstances, saveUserLogs, fetchAppConfig } from './services/auth';
@@ -49,11 +49,9 @@ const Routing: React.FC = () => {
           
           // --- INSTANCE SANITIZATION ---
           let loadedInstances = data.instances || [];
-          // Fix: Handle Firebase returning objects for sparse arrays
           if (loadedInstances && typeof loadedInstances === 'object' && !Array.isArray(loadedInstances)) {
               loadedInstances = Object.values(loadedInstances);
           }
-          // Fix: Filter nulls and fix statuses
           loadedInstances = loadedInstances
             .filter(inst => inst && inst.targetUid)
             .map(inst => {
@@ -64,12 +62,10 @@ const Routing: React.FC = () => {
                      ...inst,
                      status: effectiveStatus,
                      startedTimestamp: inst.startedTimestamp || (effectiveStatus === 'active' ? Date.now() : undefined),
-                     // Ensure safeModeStartTime is null if undefined/missing, otherwise Firebase crashes on re-save
                      safeModeStartTime: (inst.safeMode && !inst.safeModeStartTime) ? Date.now() : (inst.safeModeStartTime ?? null)
                  };
             });
 
-          // --- LOG SANITIZATION (Fixes Blue Screen) ---
           let loadedLogs = data.logs || [];
           if (loadedLogs && typeof loadedLogs === 'object' && !Array.isArray(loadedLogs)) {
               loadedLogs = Object.values(loadedLogs);
@@ -152,19 +148,16 @@ const Routing: React.FC = () => {
     });
   }, [currentUser]);
 
-  // Stable Update Handler
   const handleUpdateInstance = useCallback((id: string, data: Partial<Instance>) => {
     setInstances(prev => prev.map(i => i.id === id ? { ...i, ...data } : i));
   }, []);
 
   // --- SAFELY GET BOT CONFIG ---
   const getBotConfig = (instance: Instance, user: User) => {
-    // Sanitize allowedBots to ensure it's an array
     let bots = user.allowedBots;
     if (bots && typeof bots === 'object' && !Array.isArray(bots)) {
         bots = Object.values(bots);
     }
-    // Filter out potential nulls
     const safeBots = Array.isArray(bots) ? bots.filter(b => b && b.name) : [];
 
     const availableBots = safeBots.length > 0 ? safeBots : (user.config ? [{
@@ -176,6 +169,8 @@ const Routing: React.FC = () => {
     return availableBots.find(b => b.name === instance.botName) || availableBots[0];
   };
 
+  // --- ACTIONS (LOGIC UPDATED FOR ADD/REMOVE FRIEND) ---
+
   const handleLaunch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || currentUser.role !== 'user') return;
@@ -183,12 +178,10 @@ const Routing: React.FC = () => {
 
     const user = currentUser as User;
     
-    // --- SAFE BOT LIST GENERATION ---
     let bots = user.allowedBots;
     if (bots && typeof bots === 'object' && !Array.isArray(bots)) {
         bots = Object.values(bots);
     }
-    // Filter to ensure no undefined entries cause a crash in render
     const safeBots = Array.isArray(bots) ? bots.filter(b => b && b.name) : [];
     
     const availableBots = safeBots.length > 0 ? safeBots : (user.config ? [{
@@ -206,9 +199,10 @@ const Routing: React.FC = () => {
     if (instances.some(i => i.targetUid === targetUid)) return addLog(`Warning: UID ${targetUid} already active.`, "warning");
 
     setIsLoading(true);
-    addLog(`Initializing Launch for ${targetUid} on ${selectedBot.name}...`, "info");
+    addLog(`[SYSTEM] Initializing New Instance for ${targetUid}...`, "info");
 
     try {
+      addLog(`[API] Sending 'Add Friend' Request to ${selectedBot.name}...`, "warning");
       const responseMsg = await launchInstanceApi(targetUid, selectedBot.addApiUrl);
       
       const newInstance: Instance = {
@@ -219,14 +213,14 @@ const Routing: React.FC = () => {
         startedAt: new Date().toLocaleTimeString(),
         startedTimestamp: Date.now(),
         safeMode: false,
-        safeModeStartTime: null // Explicit null to prevent undefined error in Firebase
+        safeModeStartTime: null
       };
 
       setInstances(prev => [newInstance, ...prev]);
-      addLog(`SUCCESS: ${responseMsg}`, "success");
+      addLog(`[SUCCESS] Friend Request Sent. Instance Launched.`, "success");
       setTargetUid('');
     } catch (error: any) {
-      addLog(`LAUNCH FAILURE: ${error.message}`, "error");
+      addLog(`[FAIL] Launch Failed: ${error.message}`, "error");
     } finally {
       setIsLoading(false);
     }
@@ -237,21 +231,23 @@ const Routing: React.FC = () => {
     const user = currentUser as User;
     
     const instance = instances.find(i => i.id === id);
-    setInstances(prev => prev.filter(i => i.id !== id));
-    addLog(`Removed instance ${uid} from dashboard...`, "warning");
-
     if (!instance) return;
-    if (sessionError) return addLog(`Note: Database/Network offline. Removed locally only.`, "warning");
 
+    addLog(`[SYSTEM] Deleting Instance ${uid}...`, "warning");
+
+    // 1. Remove Friend Server-Side
     const botConfig = getBotConfig(instance, user);
-
     try {
-      // DELETE calls remove friend API
+      addLog(`[API] Removing Friend for ${uid}...`, "warning");
       await deleteInstanceApi(uid, botConfig.removeApiUrl);
-      addLog(`Server confirmed removal for ${uid}.`, "success");
+      addLog(`[SUCCESS] Friend Removed Successfully.`, "success");
     } catch (error: any) {
-      addLog(`Warning: Instance ${uid} removed locally, but API returned error: ${error.message}`, "warning");
+      addLog(`[WARN] Friend Remove API failed: ${error.message}`, "warning");
     }
+
+    // 2. Remove from Dashboard Local State
+    setInstances(prev => prev.filter(i => i.id !== id));
+    addLog(`[SYSTEM] Instance ${uid} removed from dashboard.`, "info");
   };
 
   const handleStop = async (id: string, uid: string, isAuto = false) => {
@@ -263,20 +259,21 @@ const Routing: React.FC = () => {
      const botConfig = getBotConfig(instance, user);
 
      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'removing' } : i));
-     addLog(`${isAuto ? '[SafeMode] ' : ''}Stopping instance ${uid}...`, "warning");
+     addLog(`${isAuto ? '[SafeMode] ' : ''}[CMD: STOP] Stopping ${uid}...`, "warning");
 
      try {
-         // STOP calls remove friend API
+         // STOP = REMOVE FRIEND
+         addLog(`[API] Requesting 'Remove Friend' for ${uid}...`, "info");
          const msg = await deleteInstanceApi(uid, botConfig.removeApiUrl);
-         addLog(`Stopped: ${msg}`, "info");
+         
+         addLog(`[SUCCESS] Friend Removed. Bot Stopped.`, "success");
          setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'stopped', safeMode: false, safeModeStartTime: null } : i));
      } catch (error: any) {
-         addLog(`Failed to stop: ${error.message}`, "error");
+         addLog(`[ERROR] Stop Failed: ${error.message}`, "error");
          setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
      }
   };
 
-  // NEW: Handle Start (Calls Add Friend API)
   const handleStart = async (id: string, uid: string) => {
       if (!currentUser || currentUser.role !== 'user' || sessionError) return;
       const user = currentUser as User;
@@ -285,14 +282,15 @@ const Routing: React.FC = () => {
 
       const botConfig = getBotConfig(instance, user);
 
-      // Optimistic update to UI
       setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'active' } : i));
-      addLog(`Starting ${uid}...`, "info");
+      addLog(`[CMD: START] Starting ${uid}...`, "info");
 
       try {
-          // START calls Add Friend API
+          // START = ADD FRIEND
+          addLog(`[API] Sending 'Add Friend' Request...`, "info");
           const msg = await launchInstanceApi(uid, botConfig.addApiUrl);
-          addLog(`Start Success: ${msg}`, "success");
+          
+          addLog(`[SUCCESS] Friend Added. Bot Started.`, "success");
 
           // Reset uptime on start
           setInstances(prev => prev.map(i => i.id === id ? { 
@@ -302,7 +300,7 @@ const Routing: React.FC = () => {
               startedTimestamp: Date.now() 
           } : i));
       } catch (error: any) {
-          addLog(`Start Failed: ${error.message}`, "error");
+          addLog(`[ERROR] Start Failed: ${error.message}`, "error");
           setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
       }
   };
@@ -316,29 +314,31 @@ const Routing: React.FC = () => {
       const botConfig = getBotConfig(instance, user);
 
       setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'restarting' } : i));
-      addLog(`Restarting ${uid}...`, "info");
+      addLog(`[CMD: RESTART] Rebooting logic for ${uid}...`, "warning");
 
       try {
-          // RESTART: 1. Remove Friend
+          // STEP 1: REMOVE FRIEND
+          addLog(`[STEP 1] Removing Friend...`, "info");
           await deleteInstanceApi(uid, botConfig.removeApiUrl);
-          addLog(`Cleaned previous session for ${uid}.`, "info");
           
-          // RESTART: 2. Add Friend
-          const msg = await launchInstanceApi(uid, botConfig.addApiUrl);
-          addLog(`Restart Success: ${msg}`, "success");
+          // STEP 2: ADD FRIEND
+          addLog(`[STEP 2] Adding Friend...`, "info");
+          await launchInstanceApi(uid, botConfig.addApiUrl);
+          
+          addLog(`[SUCCESS] Restart Complete. Friend Removed & Added.`, "success");
 
-          // Update State: Reset Uptime (startedTimestamp)
+          // Reset Uptime
           setInstances(prev => prev.map(i => i.id === id ? { 
               ...i, 
               status: 'active', 
               startedAt: new Date().toLocaleTimeString(),
-              startedTimestamp: Date.now(), // Resets Uptime
+              startedTimestamp: Date.now(), 
               initialSessionExp: undefined, 
               lastKnownRate: undefined 
           } : i));
 
       } catch (error: any) {
-          addLog(`Restart Failed: ${error.message}`, "error");
+          addLog(`[ERROR] Restart Failed: ${error.message}`, "error");
           setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
       }
   };
@@ -367,13 +367,10 @@ const Routing: React.FC = () => {
 
   const user = currentUser as User;
   
-  // --- PREPARE BOT LIST FOR UI ---
-  // Ensure we don't crash if allowedBots is weird
   let botListRaw = user.allowedBots;
   if (botListRaw && typeof botListRaw === 'object' && !Array.isArray(botListRaw)) {
       botListRaw = Object.values(botListRaw);
   }
-  // CRITICAL FIX: Filter out null/undefined bots to prevent render crash
   const botList = Array.isArray(botListRaw) && botListRaw.length > 0 
       ? botListRaw.filter(b => b && b.name) 
       : (user.config ? [{
@@ -382,7 +379,6 @@ const Routing: React.FC = () => {
           removeApiUrl: user.config.removeApiUrl
       }] : []);
 
-  // Ensure there is at least one fallback bot to render
   const safeBotList = botList.length > 0 ? botList : [{name: "Default Bot", addApiUrl: "", removeApiUrl: ""}];
 
   const limit = user.maxInstances || user.config?.maxInstances || 1;
@@ -427,74 +423,85 @@ const Routing: React.FC = () => {
         
         {/* LEFT COL */}
         <div className="lg:col-span-6 space-y-6 flex flex-col">
-            <div className={`bg-slate-900/80 border border-slate-700/80 rounded-2xl overflow-hidden shadow-2xl relative flex-shrink-0 ${sessionError ? 'opacity-50 pointer-events-none' : ''}`}>
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-gradient-to-r from-cyan-500 to-purple-500 shadow-[0_0_10px_#22d3ee]"></div>
-                <div className="p-6">
-                    <div className="flex items-center gap-3 mb-6">
-                        <div className="bg-cyan-500/10 p-2.5 rounded-lg border border-cyan-500/20">
+            <div className={`bg-slate-900/40 border border-slate-800 rounded-3xl p-6 relative overflow-hidden ${sessionError ? 'opacity-50 pointer-events-none' : ''}`}>
+                {/* Light glow at top center */}
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-[2px] bg-cyan-500 blur-[8px]"></div>
+
+                {/* Header Row */}
+                <div className="flex items-start justify-between mb-8">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-cyan-500/10 rounded-xl border border-cyan-500/20 flex items-center justify-center">
                             <Server size={24} className="text-cyan-400" />
                         </div>
                         <div>
-                            <h2 className="text-xl font-bold text-white leading-tight">Launch Instance</h2>
-                            <p className="text-xs text-slate-400 font-mono">Deploy new bot worker</p>
+                            <h2 className="text-2xl font-bold text-white leading-tight">Launch<br/>Instance</h2>
+                            <p className="text-xs text-slate-500 mt-1">Deploy new bot worker</p>
                         </div>
-                        <div className="ml-auto flex items-center gap-2 bg-black/40 px-3 py-1 rounded-full border border-slate-700">
-                             <Cpu size={14} className="text-purple-400" />
-                             <span className="text-xs font-mono font-bold text-slate-300">{instances.length}/{limit} Active</span>
+                    </div>
+                    
+                    <div className="bg-slate-950/50 border border-slate-800 rounded-full px-4 py-2 flex items-center gap-3">
+                         <Cpu size={16} className="text-purple-500 animate-pulse" />
+                         <div className="flex flex-col items-end leading-none">
+                            <span className="text-sm font-mono font-bold text-white">{instances.length}/{limit}</span>
+                            <span className="text-[10px] text-slate-500 uppercase font-bold">Active</span>
+                         </div>
+                    </div>
+                </div>
+
+                {/* Form */}
+                <form onSubmit={handleLaunch} className="space-y-6">
+                    {/* Select */}
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Select Server Node</label>
+                        <div className="relative group">
+                            <select
+                                value={selectedBotIndex}
+                                onChange={(e) => setSelectedBotIndex(Number(e.target.value))}
+                                className="w-full bg-slate-950/30 border border-slate-800 text-white appearance-none pl-4 pr-10 py-4 rounded-xl font-medium focus:outline-none focus:border-cyan-500 hover:border-slate-700 transition-colors cursor-pointer"
+                            >
+                                {safeBotList.map((bot, index) => (
+                                    <option key={index} value={index}>{bot.name}</option>
+                                ))}
+                            </select>
+                            <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                         </div>
                     </div>
 
-                    <form onSubmit={handleLaunch} className="space-y-5">
-                        <div className="space-y-1">
-                            <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider ml-1">Select Server Node</label>
-                            <div className="relative group">
-                                <select
-                                    value={selectedBotIndex}
-                                    onChange={(e) => setSelectedBotIndex(Number(e.target.value))}
-                                    className="w-full bg-black/40 border border-slate-600 text-slate-200 appearance-none pl-4 pr-10 py-3 rounded-xl font-mono text-sm focus:outline-none focus:border-cyan-500"
-                                >
-                                    {safeBotList.map((bot, index) => (
-                                        <option key={index} value={index}>{bot.name}</option>
-                                    ))}
-                                </select>
-                                <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 group-hover:text-cyan-400 pointer-events-none" />
-                            </div>
-                        </div>
+                    {/* Input */}
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target UID</label>
+                        <input
+                            type="number"
+                            value={targetUid}
+                            onChange={(e) => setTargetUid(e.target.value)}
+                            placeholder="Enter Free Fire UID"
+                            className="w-full bg-slate-950/30 border border-slate-800 text-white placeholder-slate-600 px-4 py-4 rounded-xl font-medium focus:outline-none focus:border-cyan-500 transition-all"
+                        />
+                    </div>
 
-                        <div className="space-y-1">
-                            <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider ml-1">Target UID</label>
-                            <input
-                                type="number"
-                                value={targetUid}
-                                onChange={(e) => setTargetUid(e.target.value)}
-                                placeholder="Enter Free Fire UID"
-                                className="w-full bg-black/40 border border-slate-600 text-white placeholder-slate-600 px-4 py-3 rounded-xl font-mono focus:outline-none focus:border-cyan-500"
-                            />
-                        </div>
-
-                        <button
-                            type="submit"
-                            disabled={isLoading}
-                            className={`w-full font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] ${
-                                isLoading 
-                                ? 'bg-slate-700 cursor-wait text-slate-400' 
-                                : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white shadow-cyan-900/20 cursor-pointer'
-                            }`}
-                        >
-                            {isLoading ? (
-                                <>
-                                    <Loader2 size={18} className="animate-spin" />
-                                    <span>Deploying...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Play size={18} className="fill-current" />
-                                    <span>START ENGINE</span>
-                                </>
-                            )}
-                        </button>
-                    </form>
-                </div>
+                    {/* Button */}
+                    <button
+                        type="submit"
+                        disabled={isLoading}
+                        className={`w-full font-bold py-4 rounded-xl shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] ${
+                            isLoading 
+                            ? 'bg-slate-800 cursor-wait text-slate-500' 
+                            : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/20 cursor-pointer'
+                        }`}
+                    >
+                        {isLoading ? (
+                            <>
+                                <Loader2 size={20} className="animate-spin" />
+                                <span className="text-base">INITIALIZING...</span>
+                            </>
+                        ) : (
+                            <>
+                                <Play size={20} className="fill-current" />
+                                <span className="text-base">START ENGINE</span>
+                            </>
+                        )}
+                    </button>
+                </form>
             </div>
             <ConsoleLog logs={logs} />
         </div>
