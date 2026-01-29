@@ -67,7 +67,14 @@ export const fetchUsers = async (): Promise<User[]> => {
     const snapshot = await get(child(dbRef, `users`));
     if (snapshot.exists()) {
       const data = snapshot.val();
-      return Object.values(data);
+      // Safe convert to array
+      const userList = Object.values(data) as User[];
+      
+      // Additional sanitization: Ensure allowedBots is array for all users
+      return userList.map(u => ({
+          ...u,
+          allowedBots: Array.isArray(u.allowedBots) ? u.allowedBots : (u.allowedBots && typeof u.allowedBots === 'object' ? Object.values(u.allowedBots) : [])
+      }));
     } else {
       return [];
     }
@@ -99,6 +106,13 @@ export const login = async (username: string, password: string): Promise<{ succe
         if (Date.now() > user.expiryDate) {
            return { success: false, message: "Account Expired. Contact Admin." };
         }
+        
+        // --- SANITIZATION ON LOGIN ---
+        // Ensure allowedBots is an array, not an object/map
+        if (user.allowedBots && typeof user.allowedBots === 'object' && !Array.isArray(user.allowedBots)) {
+            user.allowedBots = Object.values(user.allowedBots);
+        }
+
         localStorage.setItem(SESSION_KEY, JSON.stringify(user));
         return { success: true, user };
       } else {
@@ -124,10 +138,17 @@ export const getSession = (): CurrentUser | null => {
     if (!session) return null;
     const user = JSON.parse(session);
     
-    if (user.role === 'user' && Date.now() > (user as User).expiryDate) {
-      logout();
-      return null;
+    // Sanitize session user as well just in case
+    if (user.role === 'user') {
+         if (Date.now() > (user as User).expiryDate) {
+            logout();
+            return null;
+         }
+         if (user.allowedBots && typeof user.allowedBots === 'object' && !Array.isArray(user.allowedBots)) {
+            user.allowedBots = Object.values(user.allowedBots);
+         }
     }
+
     return user;
   } catch (e) {
     logout();
@@ -202,7 +223,14 @@ export const saveUserInstances = async (username: string, instances: Instance[])
   await ensureAuth();
   try {
     const sName = sanitize(username);
-    await set(ref(db, `users/${sName}/instances`), instances);
+    
+    // CRITICAL FIX: Firebase throws if any value is `undefined`.
+    // We use JSON.parse(JSON.stringify(obj)) to strip all undefined keys automatically.
+    // This is safer than manual sanitation.
+    // If an array element becomes null, Firebase set handles it by indexing the object keys (e.g. "0", "1")
+    const cleanInstances = JSON.parse(JSON.stringify(instances));
+    
+    await set(ref(db, `users/${sName}/instances`), cleanInstances);
   } catch (error) {
     console.error("Error saving instances", error);
   }
@@ -212,9 +240,10 @@ export const saveUserLogs = async (username: string, logs: LogEntry[]) => {
   await ensureAuth();
   try {
     const sName = sanitize(username);
-    // Limit logs to last 50 to prevent DB bloat
+    // Limit logs to last 50 and sanitize undefined values
     const slicedLogs = logs.slice(-50); 
-    await set(ref(db, `users/${sName}/logs`), slicedLogs);
+    const cleanLogs = JSON.parse(JSON.stringify(slicedLogs));
+    await set(ref(db, `users/${sName}/logs`), cleanLogs);
   } catch (error) {
     console.error("Error saving logs", error);
   }

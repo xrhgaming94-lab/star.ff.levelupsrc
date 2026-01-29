@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { Users, UserPlus, Trash2, LogOut, Clock, Code, Shield, Settings, Link as LinkIcon, Save, Plus, X, Eye, User as UserIcon, Youtube, FileText, Loader2, RefreshCw, Activity, Image as ImageIcon } from 'lucide-react';
 import { fetchUsers, createUser, deleteUser, fetchAppConfig, saveAppConfig } from '../services/auth';
 import { User, BotConfig } from '../types';
 import ExpiryTimer from './ExpiryTimer';
@@ -16,6 +16,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [contactLink, setContactLink] = useState('');
   const [youtubeLink, setYoutubeLink] = useState('');
   const [dashboardInstructions, setDashboardInstructions] = useState('');
+  
+  // Updated Defaults to user preference
+  const [levelApiUrl, setLevelApiUrl] = useState('');
+  const [bannerApiUrl, setBannerApiUrl] = useState('');
+  
+  const [safeModeDuration, setSafeModeDuration] = useState(60);
   
   // Loading States
   const [isSaving, setIsSaving] = useState(false);
@@ -54,6 +60,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         setContactLink(config.contactLink || '');
         setYoutubeLink(config.youtubeLink || '');
         setDashboardInstructions(config.dashboardInstructions || '');
+        
+        // Defaults if not set in DB
+        setLevelApiUrl(config.levelApiUrl || 'https://danger-level-info.vercel.app/level/{uid}');
+        setBannerApiUrl(config.bannerApiUrl || 'https://banner-smoky-theta.vercel.app/profile?uid={uid}');
+        
+        setSafeModeDuration(config.safeModeDurationMinutes || 60);
     } catch (e) {
         console.error("Failed to load config", e);
     }
@@ -63,6 +75,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsLoadingUsers(true);
     try {
         const fetchedUsers = await fetchUsers();
+        // Force allowedBots to be arrays (sanitization handled in fetchUsers but double checked here)
         setUsers(fetchedUsers);
     } catch (error) {
         console.error(error);
@@ -79,7 +92,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         await saveAppConfig({ 
             contactLink,
             youtubeLink,
-            dashboardInstructions
+            dashboardInstructions,
+            levelApiUrl,
+            bannerApiUrl,
+            safeModeDurationMinutes: Number(safeModeDuration)
         });
         alert("System configuration saved to Firebase!");
     } catch (error) {
@@ -205,12 +221,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                  </div>
 
                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><FileText size={12}/> Dashboard Instructions (Overrides Default)</label>
+                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><Activity size={12}/> Level Info API (Use {'{uid}'} placeholder)</label>
+                    <input type="text" value={levelApiUrl} onChange={e => setLevelApiUrl(e.target.value)} placeholder="https://api.../level/{uid}" className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm font-mono" />
+                 </div>
+
+                 <div className="space-y-1">
+                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><ImageIcon size={12}/> Banner API (Use {'{uid}'} placeholder)</label>
+                    <input type="text" value={bannerApiUrl} onChange={e => setBannerApiUrl(e.target.value)} placeholder="https://.../profile?uid={uid}" className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm font-mono" />
+                 </div>
+
+                 <div className="space-y-1">
+                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><Clock size={12}/> Safe Mode Auto-Stop (Minutes)</label>
+                    <input type="number" value={safeModeDuration} onChange={e => setSafeModeDuration(Number(e.target.value))} className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm font-mono" />
+                 </div>
+
+                 <div className="space-y-1">
+                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><FileText size={12}/> Dashboard Instructions</label>
                     <textarea 
                         value={dashboardInstructions} 
                         onChange={e => setDashboardInstructions(e.target.value)} 
-                        placeholder="Enter custom instructions here. Leave empty to use default style." 
-                        className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm font-mono min-h-[100px]" 
+                        placeholder="Enter custom instructions here..." 
+                        className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm font-mono min-h-[80px]" 
                     />
                  </div>
 
@@ -244,7 +275,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                  <div className="space-y-4 p-4 bg-black/20 rounded-lg border border-slate-700/50">
                   <h3 className="text-xs font-bold text-slate-500 uppercase">Limits & Expiry</h3>
                   <div>
-                    <label className="text-xs text-slate-400 block mb-1">Max Active Instances (Total)</label>
+                    <label className="text-xs text-slate-400 block mb-1">Max Active Instances</label>
                     <input required type="number" min="1" value={limit} onChange={e => setLimit(Number(e.target.value))} className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm" />
                   </div>
                   <div className="grid grid-cols-3 gap-2 pt-2">
@@ -360,7 +391,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                               <tr key={user.username} className="hover:bg-white/5 transition-colors">
                                 <td className="p-4 font-bold text-white">{user.username}</td>
                                 <td className="p-4 text-slate-300">
-                                  {user.allowedBots ? (
+                                  {user.allowedBots && Array.isArray(user.allowedBots) ? (
                                       <div className="flex flex-wrap gap-1">
                                           {user.allowedBots.slice(0, 2).map((b, i) => (
                                               <span key={i} className="text-[10px] bg-slate-700 px-1.5 py-0.5 rounded">{b.name}</span>
@@ -472,7 +503,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                             <Code size={12} /> Assigned Bots
                         </h4>
                         <div className="space-y-2 bg-black/20 p-3 rounded-lg border border-slate-700/50 max-h-48 overflow-y-auto console-scroll">
-                            {selectedUser.allowedBots ? selectedUser.allowedBots.map((b, i) => (
+                            {selectedUser.allowedBots && Array.isArray(selectedUser.allowedBots) ? selectedUser.allowedBots.map((b, i) => (
                                 <div key={i} className="bg-slate-800/80 p-3 rounded border border-slate-700 flex flex-col gap-1">
                                     <div className="flex items-center justify-between">
                                         <span className="text-sm font-bold text-gaming-neon">{b.name}</span>

@@ -8,10 +8,13 @@ interface ConsoleLogProps {
 
 const ConsoleLog: React.FC<ConsoleLogProps> = ({ logs }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
+  
+  // Safety check to ensure logs is always an array to prevent "map is not a function" crash
+  const safeLogs = Array.isArray(logs) ? logs : [];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  }, [safeLogs]);
 
   return (
     <div className="bg-black/40 border border-slate-700 rounded-lg overflow-hidden flex flex-col h-64 md:h-80 shadow-inner">
@@ -20,10 +23,10 @@ const ConsoleLog: React.FC<ConsoleLogProps> = ({ logs }) => {
         <span className="text-xs font-mono font-bold text-slate-300">SYSTEM CONSOLE</span>
       </div>
       <div className="p-4 overflow-y-auto flex-1 font-mono text-xs md:text-sm space-y-1 console-scroll">
-        {logs.length === 0 && (
+        {safeLogs.length === 0 && (
           <div className="text-slate-500 italic">Waiting for commands...</div>
         )}
-        {logs.map((log) => (
+        {safeLogs.map((log) => (
           <div key={log.id} className="flex gap-2 animate-in fade-in slide-in-from-left-2 duration-300">
             <span className="text-slate-500 min-w-[80px]">[{log.timestamp}]</span>
             <span className={
