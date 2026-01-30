@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Instance, LevelInfo } from '../types';
 import { fetchLevelInfo, fetchProfileData } from '../services/api';
-import { Trash2, StopCircle, RotateCw, Shield, ShieldAlert, Clock, User as UserIcon, RefreshCw, Zap, Loader2, Timer, TrendingUp, ArrowRight, Play } from 'lucide-react';
+import { Trash2, StopCircle, RotateCw, Shield, ShieldAlert, User as UserIcon, RefreshCw, Zap, Loader2, Timer, TrendingUp, ArrowRight, Play, Image as ImageIcon } from 'lucide-react';
 
 interface InstanceCardProps {
   instance: Instance;
@@ -27,18 +27,21 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
   onUpdate
 }) => {
   const [levelData, setLevelData] = useState<LevelInfo | null>(null);
-  const [profile, setProfile] = useState<{ Avatar?: string; Banner?: string; Nickname?: string } | null>(null);
-  const [xpRate, setXpRate] = useState<string>(instance.lastKnownRate || "--");
+  const [profile, setProfile] = useState<any>(null);
+  
+  // Display States
+  const [xpRate, setXpRate] = useState<string>(instance.lastKnownRate && instance.lastKnownRate !== "--" ? instance.lastKnownRate : "Calculating...");
   const [uptime, setUptime] = useState<string>("--");
+  
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [imgError, setImgError] = useState(false);
 
-  // Refs to avoid dependency loops and store previous state for calculation
-  const prevExpRef = useRef<number>(0);
-  const lastFetchTimeRef = useRef<number>(0); // Timestamp of last successful level fetch
-  const xpRateRef = useRef<string>(instance.lastKnownRate || "--");
+  // --- ROLLING HISTORY REF ---
+  // Stores {time, exp} points to calculate speed over the last 60 seconds
+  const xpHistoryRef = useRef<{time: number, exp: number}[]>([]);
+  
   const onUpdateRef = useRef(onUpdate);
 
-  useEffect(() => { xpRateRef.current = xpRate; }, [xpRate]);
   useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
 
   const parseExp = (val: any) => {
@@ -56,74 +59,51 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
   };
 
   const loadData = useCallback(async (isAutoRefresh = false) => {
-    // Only show spinner if manual refresh
     if (!isAutoRefresh) setIsRefreshing(true);
     
     try {
       const lvl = await fetchLevelInfo(instance.targetUid, levelApiUrl);
+      
       if (lvl) {
-        // 1. Current Exp
-        const current = parseExp(getProp(lvl, ['current_exp', 'curr_exp', 'CurrentExp']));
-        const previous = prevExpRef.current;
+        const currentExp = parseExp(getProp(lvl, ['current_exp', 'curr_exp', 'CurrentExp']));
         const now = Date.now();
         
-        // Initial Session EXP tracking
-        if (instance.initialSessionExp === undefined && current > 0) {
-            onUpdateRef.current(instance.id, { initialSessionExp: current });
-        }
+        if (currentExp > 0) {
+            // 1. Add current point to history
+            xpHistoryRef.current.push({ time: now, exp: currentExp });
 
-        // 2. XP Per Minute Auto-Calculation
-        // We prioritize local calculation if we have valid data points, as it reflects real-time bot performance better than cached API stats.
-        let calculatedRate = -1;
-        
-        if (current > 0) {
-             // Logic: If previous is 0, this is the FIRST fetch on this session.
-             // We cannot calculate speed yet.
-             if (previous === 0) {
-                // Keep existing rate if valid, else set to calculating
-                if (instance.lastKnownRate && instance.lastKnownRate !== "Calculating..." && instance.lastKnownRate !== "--") {
-                    // keep it
-                } else {
-                     setXpRate("Calculating...");
+            // 2. Keep only last 70 seconds of history (Rolling Window)
+            // We need slightly more than 60s to find a good comparison point
+            const cutoff = now - 70000;
+            xpHistoryRef.current = xpHistoryRef.current.filter(p => p.time > cutoff);
+
+            // 3. Calculate Rate (XP Per Minute)
+            if (xpHistoryRef.current.length >= 2) {
+                const newest = xpHistoryRef.current[xpHistoryRef.current.length - 1];
+                const oldest = xpHistoryRef.current[0];
+                
+                const timeDiffMs = newest.time - oldest.time;
+                const expDiff = newest.exp - oldest.exp;
+
+                // Only update rate if we have a valid time difference (> 5 seconds to avoid divide by zero spikes)
+                if (timeDiffMs > 5000) {
+                     // Normalize to 60 seconds (1 minute)
+                     // Formula: (XP Gained / Time Elapsed in Minutes)
+                     const mins = timeDiffMs / 60000;
+                     const calculatedRate = Math.floor(expDiff / mins);
+
+                     // Only show positive rates (ignore level up resets or glitches)
+                     if (calculatedRate >= 0) {
+                         const rateStr = String(calculatedRate);
+                         setXpRate(rateStr);
+                         
+                         // Save to parent occasionally
+                         if (Math.random() > 0.8) {
+                             onUpdateRef.current(instance.id, { lastKnownRate: rateStr });
+                         }
+                     }
                 }
-                prevExpRef.current = current;
-                lastFetchTimeRef.current = now;
-             } else {
-                 // Second fetch onwards: Calculate diff
-                 const expDiff = current - previous;
-                 const timeDiffMs = now - lastFetchTimeRef.current;
-                 
-                 // Valid calculation only if reasonable time passed (> 5s to avoid jitter)
-                 if (timeDiffMs > 5000) {
-                     // Normalize to per minute
-                     calculatedRate = Math.floor((expDiff / timeDiffMs) * 60000);
-                     
-                     // Update references for next tick
-                     prevExpRef.current = current;
-                     lastFetchTimeRef.current = now;
-                 }
-             }
-        }
-
-        // Determine Final Rate to Display
-        const apiRateRaw = getProp(lvl, ['xp_per_min', 'exp_per_min', 'rate']);
-        const apiRate = apiRateRaw !== undefined ? parseInt(String(apiRateRaw)) : -1;
-
-        let finalRate = xpRateRef.current;
-
-        // Priority 1: Valid Local Calculation (even if 0, it means bot is stopped/waiting)
-        if (calculatedRate >= 0) {
-            finalRate = String(calculatedRate);
-        } 
-        // Priority 2: Valid API Rate
-        else if (apiRate >= 0) {
-            finalRate = String(apiRate);
-        }
-        
-        // Update State if changed
-        if (finalRate !== xpRateRef.current && finalRate !== "--" && finalRate !== "Calculating...") {
-            setXpRate(finalRate);
-            onUpdateRef.current(instance.id, { lastKnownRate: finalRate });
+            }
         }
         
         setLevelData(lvl);
@@ -133,27 +113,32 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
     } finally {
         if (!isAutoRefresh) setIsRefreshing(false);
     }
-  }, [instance.targetUid, instance.id, levelApiUrl, instance.initialSessionExp, instance.lastKnownRate]);
+  }, [instance.targetUid, instance.id, levelApiUrl]);
 
   // Load Profile Image
   useEffect(() => {
+      let isMounted = true;
       const loadProfile = async () => {
+          setImgError(false);
           try {
               const data = await fetchProfileData(instance.targetUid, bannerApiUrl);
-              if (data) setProfile(data);
-          } catch(e) { console.error("Profile load error", e); }
+              if (isMounted && data) {
+                  setProfile(data);
+              }
+          } catch(e) { console.error("Profile error", e); }
       };
       loadProfile();
-      loadData();
-  }, [instance.targetUid, bannerApiUrl, loadData]);
+      return () => { isMounted = false; };
+  }, [instance.targetUid, bannerApiUrl]);
 
-  // Auto-refresh Interval - 20 SECONDS
+  // Load Data on Mount and Interval (12 Seconds)
   useEffect(() => {
-    const interval = setInterval(() => loadData(true), 20000); 
+    loadData(); 
+    const interval = setInterval(() => loadData(true), 12000); // 12 Seconds Auto-Refresh
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Uptime Timer Effect
+  // Uptime Timer
   useEffect(() => {
     if (instance.status !== 'active' && instance.status !== 'restarting') {
         setUptime('--');
@@ -169,10 +154,7 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
         const now = Date.now();
         const diff = now - (instance.startedTimestamp || now);
         
-        if (diff < 0) {
-            setUptime("0s");
-            return;
-        }
+        if (diff < 0) { setUptime("0s"); return; }
 
         const hours = Math.floor(diff / (1000 * 60 * 60));
         const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
@@ -186,8 +168,6 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
     return () => clearInterval(interval);
   }, [instance.status, instance.startedTimestamp]);
 
-  // --- Display Logic ---
-  
   const currentExp = parseExp(getProp(levelData, ['current_exp', 'curr_exp']));
   const startExp = parseExp(getProp(levelData, ['exp_for_current_level', 'start_exp']));
   const nextExp = parseExp(getProp(levelData, ['exp_for_next_level', 'next_exp']));
@@ -195,29 +175,26 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
   
   const rawLevel = getProp(levelData, ['level', 'Level', 'lvl', 'current_level', 'Lvl']);
   const levelNum = parseExp(rawLevel); 
-  
   const levelDisplay = levelNum > 0 ? levelNum : '--';
   const nextLevelDisplay = levelNum > 0 ? levelNum + 1 : '--';
 
-  const displayName = getProp(levelData, ['nickname', 'name', 'user_name']) || profile?.Nickname || 'Loading Name...';
-  
-  const avatarUrl = profile?.Avatar;
-  const bannerUrl = profile?.Banner;
+  const displayName = getProp(levelData, ['nickname', 'name', 'user_name']) || getProp(profile, ['Nickname', 'nickname', 'name', 'user_name']) || 'Loading Name...';
+  const avatarUrl = getProp(profile, ['Avatar', 'avatar', 'icon', 'image', 'pic']);
+  const bannerUrl = getProp(profile, ['Banner', 'banner', 'cover', 'background', 'wall']);
 
   let percent = 0;
   const apiPercent = getProp(levelData, ['progress_percentage', 'percent', 'percentage']);
-  
   if (apiPercent !== undefined) {
       percent = parseFloat(String(apiPercent).replace('%', ''));
   } else if (nextExp - startExp > 0) {
       percent = ((currentExp - startExp) / (nextExp - startExp)) * 100;
   }
-  
   if (isNaN(percent)) percent = 0;
   
-  // ETA Calculation
+  // ETA Calculation based on Rolling Rate
   let etaDisplay = "--";
   const rateNum = parseInt(xpRate);
+  
   if (!isNaN(rateNum) && rateNum > 0 && nextExp > currentExp) {
       const minsLeft = (nextExp - currentExp) / rateNum;
       if (minsLeft < 60) etaDisplay = `${Math.ceil(minsLeft)}m`;
@@ -230,19 +207,13 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
       etaDisplay = getProp(levelData, ['eta']);
   }
 
-  const formatNum = (num: number) => {
-    return new Intl.NumberFormat('en-US').format(num);
-  };
-
+  const formatNum = (num: number) => new Intl.NumberFormat('en-US').format(num);
   const neededDisplay = expNeeded > 0 ? expNeeded : (nextExp > currentExp ? nextExp - currentExp : 0);
-
+  const displayStatus = (instance.status || 'UNKNOWN').toUpperCase();
   const isActive = instance.status === 'active' || instance.status === 'restarting';
   const isStopped = instance.status === 'stopped' || instance.status === 'error';
   const isRemoving = instance.status === 'removing';
-  
-  const displayStatus = (instance.status || 'UNKNOWN').toUpperCase();
 
-  // Shorten Speed Text if calculating
   const speedDisplay = xpRate === "Calculating..." ? "Calc..." : xpRate;
   const showSpeedUnit = xpRate !== "Calculating..." && xpRate !== "Calc..." && xpRate !== "--";
 
@@ -280,26 +251,28 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
 
       <div className="p-4 space-y-4 flex-1">
           
-          {/* Visuals Row - UPDATED HEIGHT to h-24 for better fit */}
+          {/* Banner Row */}
           <div className="w-full h-24 rounded-lg overflow-hidden border border-slate-800 bg-slate-900 shadow-inner relative group/banner flex items-center justify-center">
-              {bannerUrl ? (
+             {bannerUrl && !imgError ? (
                   <img 
                       src={bannerUrl} 
-                      alt="Banner" 
-                      className="w-full h-full object-contain" 
+                      alt="Profile Banner" 
+                      className="w-full h-full object-contain"
+                      referrerPolicy="no-referrer"
+                      onError={() => setImgError(true)}
                   />
-              ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-slate-600 bg-slate-800/50">
-                      <span className="text-xs italic">No Banner</span>
+             ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center bg-slate-800/50 absolute inset-0">
+                      <ImageIcon size={24} className="text-slate-700" />
                   </div>
-              )}
+             )}
           </div>
 
           {/* User Info Row */}
           <div className="flex items-center gap-3">
              <div className="w-8 h-8 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-500 shrink-0 overflow-hidden shadow-sm">
                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                  ) : (
                     <UserIcon size={16} />
                  )}
@@ -398,7 +371,6 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
               </div>
           </div>
 
-          {/* Action Buttons - 4 Button Layout */}
           <div className="grid grid-cols-4 gap-1.5 pt-1">
               <button 
                   onClick={() => onStart(instance.id, instance.targetUid)}

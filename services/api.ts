@@ -1,9 +1,11 @@
 // The Service now accepts the full URL pattern from the user config
 // and replaces {target_uid} with the actual UID.
 
+// Helper: Delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Helper: Fetch with timeout
-// INCREASED TIMEOUT: 10000ms (10s) to ensure slow proxies have time to respond
-const fetchWithTimeout = async (resource: string, options: RequestInit = {}, timeout = 10000) => {
+const fetchWithTimeout = async (resource: string, options: RequestInit = {}, timeout = 5000) => {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -19,23 +21,48 @@ const fetchWithTimeout = async (resource: string, options: RequestInit = {}, tim
     }
 };
 
-// Helper: Race multiple promises and return the first success
-const raceSuccess = <T>(promises: Promise<T>[]): Promise<T> => {
-    return new Promise((resolve, reject) => {
-        let rejectedCount = 0;
-        if (promises.length === 0) {
-            reject(new Error("No promises provided"));
-            return;
+// Helper: Recursive Search for keys in JSON with Smart Object Penetration
+const findValueRecursive = (obj: any, keyRegex: RegExp, searchInsideObject = false): string | undefined => {
+    if (!obj || typeof obj !== 'object') return undefined;
+
+    // Handle Arrays: iterate elements
+    if (Array.isArray(obj)) {
+        for (const item of obj) {
+            const res = findValueRecursive(item, keyRegex, searchInsideObject);
+            if (res) return res;
         }
-        promises.forEach(p => {
-            p.then(resolve).catch((e) => {
-                rejectedCount++;
-                if (rejectedCount === promises.length) {
-                    reject(new Error("All promises failed"));
-                }
-            });
-        });
-    });
+        return undefined;
+    }
+
+    const keys = Object.keys(obj);
+
+    // 1. Check top-level keys first
+    for (const key of keys) {
+        if (keyRegex.test(key)) {
+            const val = obj[key];
+            
+            // Case A: Found a string URL
+            if (typeof val === 'string' && val.length > 4) {
+                return val;
+            }
+            
+            // Case B: Found an object, search inside it for generic image keys if requested
+            if (searchInsideObject && typeof val === 'object' && val !== null) {
+                const innerUrl = findValueRecursive(val, /^(url|src|href|icon|img|image|link|pic|source)$/i, false);
+                if (innerUrl) return innerUrl;
+            }
+        }
+    }
+
+    // 2. Dive deeper into other objects
+    for (const key of keys) {
+        if (typeof obj[key] === 'object') {
+            const result = findValueRecursive(obj[key], keyRegex, searchInsideObject);
+            if (result) return result;
+        }
+    }
+    
+    return undefined;
 };
 
 export const launchInstanceApi = async (targetUid: string, apiUrlPattern: string): Promise<string> => {
@@ -65,7 +92,7 @@ export const launchInstanceApi = async (targetUid: string, apiUrlPattern: string
 export const deleteInstanceApi = async (targetUid: string, apiUrlPattern: string): Promise<string> => {
   try {
     let url = apiUrlPattern.trim();
-    if (!url.startsWith('http')) url = `https://${url}`;
+    if (!url.startsWith('http')) url = `https://${url}`; 
     
     url = url.replace(/{target_uid}/g, targetUid);
     
@@ -86,109 +113,95 @@ export const deleteInstanceApi = async (targetUid: string, apiUrlPattern: string
   }
 };
 
-// --- New Data Fetching APIs (PARALLEL MODE) ---
+// --- Profile / Banner Fetching Logic ---
 
 export const fetchProfileData = async (uid: string, apiUrlPattern?: string): Promise<any> => {
-  const baseUrl = apiUrlPattern || "https://banner-smoky-theta.vercel.app/profile?uid={uid}";
+  // Construct the URL by replacing placeholder
+  const baseUrl = apiUrlPattern || "https://sagar-banner.vercel.app/profile?uid={uid}";
   const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
   
-  // Internal fetcher that throws on error
-  const attemptFetch = async (fetchUrl: string) => {
-      const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 8000);
-      if (!response.ok) throw new Error(`Status ${response.status}`);
-      
-      const contentType = response.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-          return await response.json();
-      }
-      if (contentType && contentType.startsWith("image/")) {
-          const blob = await response.blob();
-          return { Banner: URL.createObjectURL(blob), Avatar: "", Nickname: "" };
-      }
-      const text = await response.text();
-      // Heuristic: if text looks like a URL
-      if (text.trim().startsWith("http")) return { Banner: text.trim(), Avatar: "", Nickname: "" };
-      
-      // Attempt JSON parse even if header is wrong
-      try {
-          const json = JSON.parse(text);
-          return json;
-      } catch(e) {
-          throw new Error("Invalid response format");
-      }
+  // OPTIMIZATION 1: Instant Extension Check
+  // If the URL ends with an image extension, assume it's a direct link and return immediately.
+  // This bypasses fetch entirely for maximum speed.
+  if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url)) {
+      return { Banner: url, Avatar: "", Nickname: "" };
+  }
+
+  // Helper to add cache buster
+  const getCacheBustedUrl = (u: string) => {
+      const sep = u.includes('?') ? '&' : '?';
+      return `${u}${sep}_t=${Date.now()}`;
   };
 
+  // OPTIMIZATION 2: Try fetching JSON quickly
   try {
-    // Race Direct vs Proxy vs Wrapped
-    const strategies = [
-        attemptFetch(url),
-        attemptFetch(`https://corsproxy.io/?${encodeURIComponent(url)}`),
-        attemptFetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`)
-    ];
+      // Add timestamp to prevent caching on the JSON fetch
+      const fetchUrl = getCacheBustedUrl(url);
+      const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 4000); // 4s max wait
+      
+      if (response.ok) {
+          const text = await response.text();
+          
+          try {
+              const json = JSON.parse(text);
+              if (json && typeof json === 'object') {
+                  // Smart Search for banner keys
+                  const banner = findValueRecursive(json, /.*(banner|background|cover|wall|header).*/i, true);
+                  const avatar = findValueRecursive(json, /.*(avatar|icon|image|pic|photo|profile).*/i, true);
+                  const nickname = findValueRecursive(json, /^(nickname|name|user_name|username|ign|player_name)$/i, false);
 
-    const data = await raceSuccess(strategies);
-    return data;
-  } catch (error) {
-    // Fallback: return url as banner if everything fails, assuming it might be a direct image link logic
-    return { Banner: url, Avatar: "", Nickname: "" };
+                  // If we found JSON data, use it
+                  if (banner || avatar || nickname) {
+                      return {
+                          Banner: banner || "",
+                          Avatar: avatar || "",
+                          Nickname: nickname || ""
+                      };
+                  }
+              }
+          } catch (e) {
+              // Parsing failed, it might be a plain text URL
+              if (text.trim().startsWith("http")) {
+                   return { Banner: text.trim(), Avatar: "", Nickname: "" };
+              }
+          }
+      }
+  } catch (e) {
+      // Fetch failed, swallow
   }
+
+  // FALLBACK: Force use of the constructed URL
+  return { Banner: url, Avatar: "", Nickname: "" };
 };
 
 export const fetchLevelInfo = async (uid: string, apiUrlPattern?: string): Promise<any> => {
+  // Level Info needs to be JSON, so we strictly try to fetch it.
+  const baseUrl = apiUrlPattern || "https://danger-level-info.vercel.app/level/{uid}";
+  const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
+  
+  // Helper to fetch
+  const attempt = async (u: string) => {
+      // Add timestamp to prevent caching
+      const separator = u.includes('?') ? '&' : '?';
+      const cacheBustedUrl = `${u}${separator}_t=${Date.now()}`;
+      
+      const res = await fetchWithTimeout(cacheBustedUrl, { cache: 'no-store' }, 8000);
+      if (!res.ok) throw new Error("Status " + res.status);
+      const txt = await res.text();
+      const j = JSON.parse(txt);
+      if (j && typeof j === 'object') return j;
+      throw new Error("Invalid JSON");
+  };
+
+  // Simple retry strategy
   try {
-    const baseUrl = apiUrlPattern || "https://danger-level-info.vercel.app/level/{uid}";
-    const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
-    
-    // Internal helper that throws on failure
-    const attemptFetch = async (fetchUrl: string, isJsonWrapper = false) => {
-        const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 8000);
-        if (!response.ok) throw new Error("Status " + response.status);
-        
-        const text = await response.text();
-        let json;
-        try {
-            json = JSON.parse(text);
-        } catch {
-            throw new Error("Not JSON");
-        }
-        
-        // AllOrigins /get wrapper handling
-        if (isJsonWrapper && json.contents) {
-            try {
-                json = JSON.parse(json.contents);
-            } catch {
-                // Sometimes contents is just the raw string if not JSON, but we expect JSON for level info
-                throw new Error("Wrapper JSON parse failed");
-            }
-        }
-
-        if (json && typeof json === 'object') {
-            return json;
-        }
-        throw new Error("Invalid JSON Object");
-    };
-
-    // Prepare strategies - Fire multiple requests in parallel
-    const strategies = [
-        attemptFetch(url), // Direct
-        attemptFetch(`https://corsproxy.io/?${encodeURIComponent(url)}`), // CorsProxy
-        attemptFetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`), // CodeTabs
-        attemptFetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`), // AllOrigins Raw
-        attemptFetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, true), // AllOrigins Wrapped
-        attemptFetch(`https://thingproxy.freeboard.io/fetch/${url}`) // ThingProxy
-    ];
-
-    // Race them! First one to succeed wins.
-    try {
-        const result = await raceSuccess(strategies);
-        return result;
-    } catch (aggregateError) {
-        console.warn("[Level API] All parallel strategies failed for " + uid);
-        return null;
-    }
-
-  } catch (error) {
-    console.error("[Level API] Error:", error);
-    return null;
+      return await attempt(url);
+  } catch (e) {
+      // Retry with CORS proxy if direct fails
+      try {
+          return await attempt(`https://corsproxy.io/?${encodeURIComponent(url)}`);
+      } catch (e2) {
+           return null;
+      }
   }
 };

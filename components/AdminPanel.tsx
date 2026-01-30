@@ -63,7 +63,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         
         // Defaults if not set in DB
         setLevelApiUrl(config.levelApiUrl || 'https://danger-level-info.vercel.app/level/{uid}');
-        setBannerApiUrl(config.bannerApiUrl || 'https://banner-smoky-theta.vercel.app/profile?uid={uid}');
+        setBannerApiUrl(config.bannerApiUrl || 'https://sagar-banner.vercel.app/profile?uid={uid}');
         
         setSafeModeDuration(config.safeModeDurationMinutes || 60);
     } catch (e) {

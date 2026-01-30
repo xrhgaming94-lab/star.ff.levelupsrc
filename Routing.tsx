@@ -44,6 +44,19 @@ const Routing: React.FC = () => {
       if (currentUser && currentUser.role === 'user') {
         setIsSessionLoading(true);
         setSessionError(false);
+        
+        // Timeout Safety: Force loading to finish after 8 seconds
+        const timeoutId = setTimeout(() => {
+             setIsSessionLoading((loading) => {
+                 if (loading) {
+                     console.warn("Session load timed out, forcing render.");
+                     setSessionError(true);
+                     return false;
+                 }
+                 return false;
+             });
+        }, 8000);
+
         try {
           const data = await fetchUserSession(currentUser.username);
           
@@ -77,6 +90,7 @@ const Routing: React.FC = () => {
           console.error("Failed to load session data", e);
           setSessionError(true);
         } finally {
+          clearTimeout(timeoutId);
           setIsSessionLoading(false);
         }
       }
@@ -388,6 +402,13 @@ const Routing: React.FC = () => {
           <div className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center text-slate-300 gap-4">
               <Loader2 size={40} className="animate-spin text-cyan-400" />
               <div className="font-mono text-sm tracking-widest uppercase">Syncing...</div>
+              {/* Fallback button if stuck */}
+              <button 
+                onClick={() => setIsSessionLoading(false)} 
+                className="mt-4 text-xs text-slate-500 underline hover:text-slate-300 cursor-pointer"
+              >
+                Takes too long? Skip sync
+              </button>
           </div>
       );
   }

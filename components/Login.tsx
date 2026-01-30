@@ -45,21 +45,24 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gaming-dark flex flex-col items-center justify-center p-4">
-      <div className="w-full max-w-md bg-gaming-panel border border-slate-700 rounded-2xl p-8 shadow-2xl relative overflow-hidden flex flex-col">
-        {/* Decorative background element */}
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"></div>
-        <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl"></div>
+    <div className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center p-4 relative overflow-hidden">
+      
+      {/* Background Pattern - subtle grid instead of blur */}
+      <div className="absolute inset-0 z-0 opacity-20 pointer-events-none" 
+           style={{ backgroundImage: 'radial-gradient(#3b82f6 1px, transparent 1px)', backgroundSize: '30px 30px' }}>
+      </div>
 
-        <div className="text-center mb-8 relative z-10">
+      <div className="w-full max-w-md bg-[#1e293b] border border-slate-700 rounded-2xl p-8 shadow-2xl relative z-10 flex flex-col">
+        
+        <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-800 border border-slate-700 mb-4 shadow-lg">
-            <ShieldCheck size={32} className="text-gaming-neon" />
+            <ShieldCheck size={32} className="text-[#00f0ff]" />
           </div>
           <h1 className="text-3xl font-black text-white tracking-tight">FF LEVEL UP BOT</h1>
           <p className="text-slate-500 text-sm mt-2">Access the Control Panel</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6 relative z-10">
+        <form onSubmit={handleSubmit} className="space-y-6">
           {error && (
             <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-sm p-3 rounded-lg text-center font-mono">
               {error}
@@ -74,7 +77,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-black/40 border border-slate-600 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-gaming-accent transition-colors"
+                className="w-full bg-slate-950 border border-slate-600 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
                 placeholder="Enter username"
                 required
                 disabled={isLoading}
@@ -90,7 +93,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-black/40 border border-slate-600 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-gaming-accent transition-colors"
+                className="w-full bg-slate-950 border border-slate-600 text-white pl-10 pr-4 py-3 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
                 placeholder="Enter password"
                 required
                 disabled={isLoading}
@@ -104,7 +107,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             className={`w-full font-bold py-3.5 rounded-lg shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-2 ${
                 isLoading 
                 ? 'bg-slate-700 text-slate-400 cursor-wait' 
-                : 'bg-gaming-accent hover:bg-blue-600 text-white transform active:scale-95 cursor-pointer'
+                : 'bg-blue-600 hover:bg-blue-500 text-white transform active:scale-95 cursor-pointer'
             }`}
           >
             {isLoading ? (
@@ -121,7 +124,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-slate-700 space-y-3 relative z-10">
+        <div className="mt-8 pt-6 border-t border-slate-700 space-y-3">
            <a 
              href={contactLink} 
              target="_blank" 
@@ -144,7 +147,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </div>
       </div>
       
-      <footer className="mt-8 text-center text-slate-600 text-[10px] uppercase tracking-widest font-mono">
+      <footer className="mt-8 text-center text-slate-600 text-[10px] uppercase tracking-widest font-mono z-10">
         © 2026 Star level up bot. All rights reserved
       </footer>
     </div>
