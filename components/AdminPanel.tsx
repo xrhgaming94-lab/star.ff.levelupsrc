@@ -17,13 +17,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   const [youtubeLink, setYoutubeLink] = useState('');
   const [dashboardInstructions, setDashboardInstructions] = useState('');
   
-  // Updated Defaults to user preference
   const [levelApiUrl, setLevelApiUrl] = useState('');
   const [bannerApiUrl, setBannerApiUrl] = useState('');
   
   const [safeModeDuration, setSafeModeDuration] = useState(60);
   
   // Loading States
+  const [isConfigLoading, setIsConfigLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   
@@ -55,19 +55,23 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
   }, []);
 
   const loadConfig = async () => {
+    setIsConfigLoading(true);
     try {
         const config = await fetchAppConfig();
-        setContactLink(config.contactLink || '');
-        setYoutubeLink(config.youtubeLink || '');
-        setDashboardInstructions(config.dashboardInstructions || '');
+        // Use defaults ONLY if the key is undefined, not if it's empty string
+        setContactLink(config.contactLink ?? '');
+        setYoutubeLink(config.youtubeLink ?? '');
+        setDashboardInstructions(config.dashboardInstructions ?? '');
         
-        // Defaults if not set in DB
         setLevelApiUrl(config.levelApiUrl || 'https://danger-level-info.vercel.app/level/{uid}');
         setBannerApiUrl(config.bannerApiUrl || 'https://sagar-banner.vercel.app/profile?uid={uid}');
         
         setSafeModeDuration(config.safeModeDurationMinutes || 60);
     } catch (e) {
         console.error("Failed to load config", e);
+        alert("Warning: Could not load current system settings. Saving now might overwrite with defaults.");
+    } finally {
+        setIsConfigLoading(false);
     }
   };
 
@@ -75,11 +79,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsLoadingUsers(true);
     try {
         const fetchedUsers = await fetchUsers();
-        // Force allowedBots to be arrays (sanitization handled in fetchUsers but double checked here)
         setUsers(fetchedUsers);
     } catch (error) {
         console.error(error);
-        alert("Failed to load users from database");
     } finally {
         setIsLoadingUsers(false);
     }
@@ -87,19 +89,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isConfigLoading) return; // Prevent saving if still loading
+
     setIsSaving(true);
     try {
-        await saveAppConfig({ 
+        const configToSave = { 
             contactLink,
             youtubeLink,
             dashboardInstructions,
             levelApiUrl,
             bannerApiUrl,
             safeModeDurationMinutes: Number(safeModeDuration)
-        });
-        alert("System configuration saved to Firebase!");
+        };
+        await saveAppConfig(configToSave);
+        alert("System configuration saved to Firebase successfully!");
+        // Reload to confirm persistence
+        await loadConfig();
     } catch (error) {
-        alert("Failed to save configuration");
+        console.error("Save error", error);
+        alert("Failed to save configuration to Firebase. Check console for details.");
     } finally {
         setIsSaving(false);
     }
@@ -148,10 +156,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
       await createUser(newUser);
       
-      // Update UI
       await refreshUsers();
       
-      // Reset sensitive fields
       setUsername('');
       setPassword('');
       alert("User created in Firebase successfully!");
@@ -189,7 +195,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
             </div>
           </div>
           <div className="flex gap-2">
-             <button onClick={refreshUsers} className="p-2 rounded-lg hover:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-white" title="Refresh List">
+             <button onClick={refreshUsers} className="p-2 rounded-lg hover:bg-slate-700 transition-colors cursor-pointer text-slate-400 hover:text-white" title="Refresh Users">
                  <RefreshCw size={18} className={isLoadingUsers ? "animate-spin" : ""} />
              </button>
             <button onClick={onLogout} className="flex items-center gap-2 bg-red-500/10 text-red-400 px-4 py-2 rounded-lg hover:bg-red-500/20 transition-colors cursor-pointer active:scale-95 ml-2">
@@ -204,14 +210,25 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           <div className="lg:col-span-5 space-y-6">
             
             {/* System Config */}
-            <div className="bg-gaming-panel border border-slate-700 rounded-xl p-6 shadow-xl">
-               <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
-                <Settings size={20} className="text-slate-400" />
-                System Settings
-              </h2>
-              <form onSubmit={handleSaveConfig} className="space-y-4">
+            <div className="bg-gaming-panel border border-slate-700 rounded-xl p-6 shadow-xl relative">
+               {isConfigLoading && (
+                 <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-10 flex items-center justify-center rounded-xl">
+                   <Loader2 size={30} className="animate-spin text-blue-500" />
+                 </div>
+               )}
+               <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Settings size={20} className="text-slate-400" />
+                    System Settings
+                  </h2>
+                  <button onClick={loadConfig} className="p-1 rounded hover:bg-slate-700 text-slate-500 hover:text-white transition-colors" title="Refresh Config">
+                    <RefreshCw size={14} />
+                  </button>
+               </div>
+               
+               <form onSubmit={handleSaveConfig} className="space-y-4">
                  <div className="space-y-1">
-                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><LinkIcon size={12}/> Login Contact Link</label>
+                    <label className="text-xs text-slate-400 block mb-1 flex items-center gap-2"><LinkIcon size={12}/> Login Contact Link (Get Login Details)</label>
                     <input type="text" value={contactLink} onChange={e => setContactLink(e.target.value)} placeholder="https://wa.me/..." className="w-full bg-black/40 border border-slate-600 text-white px-3 py-2 rounded text-sm font-mono" />
                  </div>
                  
@@ -247,11 +264,11 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
                  <button 
                     type="submit" 
-                    disabled={isSaving}
+                    disabled={isSaving || isConfigLoading}
                     className={`w-full font-bold py-2 rounded-lg shadow transition-colors flex items-center justify-center gap-2 text-sm ${isSaving ? 'bg-slate-700 cursor-wait text-slate-400' : 'bg-slate-700 hover:bg-slate-600 text-white cursor-pointer active:scale-95'}`}
                 >
                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14}/>} 
-                   {isSaving ? "Saving..." : "Save Config"}
+                   {isSaving ? "Saving to Firebase..." : "Save Config"}
                  </button>
               </form>
             </div>

@@ -121,8 +121,6 @@ export const fetchProfileData = async (uid: string, apiUrlPattern?: string): Pro
   const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
   
   // OPTIMIZATION 1: Instant Extension Check
-  // If the URL ends with an image extension, assume it's a direct link and return immediately.
-  // This bypasses fetch entirely for maximum speed.
   if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(url)) {
       return { Banner: url, Avatar: "", Nickname: "" };
   }
@@ -133,75 +131,89 @@ export const fetchProfileData = async (uid: string, apiUrlPattern?: string): Pro
       return `${u}${sep}_t=${Date.now()}`;
   };
 
-  // OPTIMIZATION 2: Try fetching JSON quickly
-  try {
-      // Add timestamp to prevent caching on the JSON fetch
-      const fetchUrl = getCacheBustedUrl(url);
-      const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 4000); // 4s max wait
-      
-      if (response.ok) {
-          const text = await response.text();
-          
-          try {
-              const json = JSON.parse(text);
-              if (json && typeof json === 'object') {
-                  // Smart Search for banner keys
-                  const banner = findValueRecursive(json, /.*(banner|background|cover|wall|header).*/i, true);
-                  const avatar = findValueRecursive(json, /.*(avatar|icon|image|pic|photo|profile).*/i, true);
-                  const nickname = findValueRecursive(json, /^(nickname|name|user_name|username|ign|player_name)$/i, false);
+  const proxies = [
+      (u: string) => u, // Direct
+      (u: string) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+      (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+  ];
 
-                  // If we found JSON data, use it
-                  if (banner || avatar || nickname) {
-                      return {
-                          Banner: banner || "",
-                          Avatar: avatar || "",
-                          Nickname: nickname || ""
-                      };
+  for (const proxy of proxies) {
+      try {
+          const fetchUrl = getCacheBustedUrl(proxy(url));
+          const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 5000);
+          
+          if (response.ok) {
+              const text = await response.text();
+              try {
+                  const json = JSON.parse(text);
+                  if (json && typeof json === 'object') {
+                      const banner = findValueRecursive(json, /.*(banner|background|cover|wall|header).*/i, true);
+                      const avatar = findValueRecursive(json, /.*(avatar|icon|image|pic|photo|profile).*/i, true);
+                      const nickname = findValueRecursive(json, /^(nickname|name|user_name|username|ign|player_name)$/i, false);
+
+                      if (banner || avatar || nickname) {
+                          return {
+                              Banner: banner || "",
+                              Avatar: avatar || "",
+                              Nickname: nickname || ""
+                          };
+                      }
+                  }
+              } catch (e) {
+                  // Parsing failed, it might be a plain text URL
+                  if (text.trim().startsWith("http")) {
+                       return { Banner: text.trim(), Avatar: "", Nickname: "" };
                   }
               }
-          } catch (e) {
-              // Parsing failed, it might be a plain text URL
-              if (text.trim().startsWith("http")) {
-                   return { Banner: text.trim(), Avatar: "", Nickname: "" };
-              }
           }
+      } catch (e) {
+          continue;
       }
-  } catch (e) {
-      // Fetch failed, swallow
   }
 
-  // FALLBACK: Force use of the constructed URL
+  // FALLBACK: Force use of the constructed URL if all else fails
   return { Banner: url, Avatar: "", Nickname: "" };
 };
 
 export const fetchLevelInfo = async (uid: string, apiUrlPattern?: string): Promise<any> => {
-  // Level Info needs to be JSON, so we strictly try to fetch it.
   const baseUrl = apiUrlPattern || "https://danger-level-info.vercel.app/level/{uid}";
   const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
   
-  // Helper to fetch
-  const attempt = async (u: string) => {
-      // Add timestamp to prevent caching
-      const separator = u.includes('?') ? '&' : '?';
-      const cacheBustedUrl = `${u}${separator}_t=${Date.now()}`;
-      
-      const res = await fetchWithTimeout(cacheBustedUrl, { cache: 'no-store' }, 8000);
-      if (!res.ok) throw new Error("Status " + res.status);
-      const txt = await res.text();
-      const j = JSON.parse(txt);
-      if (j && typeof j === 'object') return j;
-      throw new Error("Invalid JSON");
-  };
+  // Robust CORS Handling: Try multiple strategies
+  const proxies = [
+      (u: string) => u, // 1. Direct (Works if API supports CORS)
+      (u: string) => `https://corsproxy.io/?${encodeURIComponent(u)}`, // 2. CORS Proxy IO
+      (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`, // 3. AllOrigins
+      (u: string) => `https://thingproxy.freeboard.io/fetch/${u}` // 4. ThingProxy
+  ];
 
-  // Simple retry strategy
-  try {
-      return await attempt(url);
-  } catch (e) {
-      // Retry with CORS proxy if direct fails
+  for (const proxy of proxies) {
       try {
-          return await attempt(`https://corsproxy.io/?${encodeURIComponent(url)}`);
-      } catch (e2) {
-           return null;
+          const targetUrl = proxy(url);
+          const separator = targetUrl.includes('?') ? '&' : '?';
+          const cacheBustedUrl = `${targetUrl}${separator}_t=${Date.now()}`;
+          
+          // Use no-referrer to bypass some referer-based blocks
+          const res = await fetchWithTimeout(cacheBustedUrl, { 
+              cache: 'no-store',
+              referrerPolicy: 'no-referrer'
+          }, 6000);
+          
+          if (res.ok) {
+              const txt = await res.text();
+              try {
+                  const j = JSON.parse(txt);
+                  if (j && typeof j === 'object') return j;
+              } catch (jsonErr) {
+                  // Not JSON, try next proxy
+                  console.warn(`[LevelInfo] Invalid JSON from ${targetUrl}`);
+              }
+          }
+      } catch (e) {
+          // Network error or timeout, try next proxy
+          continue;
       }
   }
+  
+  return null;
 };
