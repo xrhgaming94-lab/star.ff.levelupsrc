@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Lock, User, ExternalLink, Youtube, Loader2, LogIn } from 'lucide-react';
+import { ShieldCheck, Lock, User, ExternalLink, Youtube, Loader2, LogIn, RefreshCw } from 'lucide-react';
 import { login, fetchAppConfig } from '../services/auth';
 import { CurrentUser } from '../types';
 
@@ -13,16 +13,26 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [error, setError] = useState('');
   const [contactLink, setContactLink] = useState('#');
   const [youtubeLink, setYoutubeLink] = useState('#');
+  
   const [isLoading, setIsLoading] = useState(false);
+  const [isConfigLoading, setIsConfigLoading] = useState(false);
 
   useEffect(() => {
-    const loadConfig = async () => {
-      const config = await fetchAppConfig();
-      setContactLink(config.contactLink || '#');
-      setYoutubeLink(config.youtubeLink || '#');
-    };
     loadConfig();
   }, []);
+
+  const loadConfig = async () => {
+      setIsConfigLoading(true);
+      try {
+          const config = await fetchAppConfig();
+          setContactLink(config.contactLink || '#');
+          setYoutubeLink(config.youtubeLink || '#');
+      } catch (e) {
+          console.error("Config load error", e);
+      } finally {
+          setIsConfigLoading(false);
+      }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +54,20 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
+  // Helper to safely handle link clicks
+  const handleLinkClick = (e: React.MouseEvent, url: string, name: string) => {
+      if (!url || url === '#' || url.trim() === '') {
+          e.preventDefault();
+          alert(`The '${name}' link has not been configured by the Admin yet.\n\nPlease contact support.`);
+          return;
+      }
+      // Protocol check handled by AdminPanel saving, but purely defensive here:
+      if (!/^https?:\/\//i.test(url)) {
+           // We can't auto-fix on click easily because target=_blank needs a valid href beforehand.
+           // AdminPanel fixes this on save.
+      }
+  };
+
   return (
     <div className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center p-4 relative overflow-hidden">
       
@@ -54,6 +78,16 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
       <div className="w-full max-w-md bg-[#1e293b] border border-slate-700 rounded-2xl p-8 shadow-2xl relative z-10 flex flex-col">
         
+        <div className="absolute top-4 right-4">
+             <button 
+                onClick={loadConfig} 
+                className={`p-2 text-slate-500 hover:text-white rounded-full hover:bg-slate-700 transition-colors ${isConfigLoading ? 'animate-spin' : ''}`}
+                title="Refresh System Config"
+             >
+                 <RefreshCw size={14} />
+             </button>
+        </div>
+
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-slate-800 border border-slate-700 mb-4 shadow-lg">
             <ShieldCheck size={32} className="text-[#00f0ff]" />
@@ -129,6 +163,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
              href={contactLink} 
              target="_blank" 
              rel="noopener noreferrer"
+             onClick={(e) => handleLinkClick(e, contactLink, "Get Login Details")}
              className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-semibold py-3 rounded-lg transition-colors group cursor-pointer active:scale-95"
            >
              <span>Get Login Details</span>
@@ -139,6 +174,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
              href={youtubeLink} 
              target="_blank" 
              rel="noopener noreferrer"
+             onClick={(e) => handleLinkClick(e, youtubeLink, "How To Use")}
              className="w-full flex items-center justify-center gap-2 bg-red-600/10 hover:bg-red-600/20 border border-red-500/30 text-red-400 font-semibold py-3 rounded-lg transition-colors group cursor-pointer active:scale-95"
            >
              <Youtube size={18} className="text-red-500 group-hover:scale-110 transition-transform" />

@@ -87,6 +87,16 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     }
   };
 
+  // HELPER: Auto-add https:// if missing to ensure links work on all devices
+  const ensureProtocol = (url: string) => {
+    if (!url || url.trim() === '') return '';
+    const clean = url.trim();
+    if (!/^https?:\/\//i.test(clean)) {
+        return `https://${clean}`;
+    }
+    return clean;
+  };
+
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isConfigLoading) return; // Prevent saving if still loading
@@ -94,14 +104,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
     setIsSaving(true);
     try {
         const configToSave = { 
-            contactLink,
-            youtubeLink,
+            contactLink: ensureProtocol(contactLink), // AUTO FIX
+            youtubeLink: ensureProtocol(youtubeLink), // AUTO FIX
             dashboardInstructions,
             levelApiUrl,
             bannerApiUrl,
             safeModeDurationMinutes: Number(safeModeDuration)
         };
         await saveAppConfig(configToSave);
+        
+        // Update local state to show the fixed URLs
+        setContactLink(configToSave.contactLink);
+        setYoutubeLink(configToSave.youtubeLink);
+
         alert("System configuration saved to Firebase successfully!");
         // Reload to confirm persistence
         await loadConfig();
