@@ -1,7 +1,8 @@
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Instance, LevelInfo } from '../types';
 import { fetchLevelInfo, fetchProfileData } from '../services/api';
-import { Trash2, StopCircle, RotateCw, Shield, ShieldAlert, User as UserIcon, RefreshCw, Zap, Loader2, Timer, TrendingUp, ArrowRight, Play, Image as ImageIcon } from 'lucide-react';
+import { Trash2, StopCircle, RotateCw, Shield, ShieldAlert, User as UserIcon, RefreshCw, Zap, Loader2, Timer, TrendingUp, ArrowRight, Play, Image as ImageIcon, Clock, Facebook, Chrome } from 'lucide-react';
 
 interface InstanceCardProps {
   instance: Instance;
@@ -36,10 +37,18 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [imgError, setImgError] = useState(false);
 
-  // --- ROLLING HISTORY REF ---
-  // Stores {time, exp} points to calculate speed over the last 60 seconds
-  const xpHistoryRef = useRef<{time: number, exp: number}[]>([]);
+  // Status checks
+  const isActive = instance.status === 'active' || instance.status === 'restarting';
+  const isPendingStart = instance.status === 'pending_start';
+  const isPendingStop = instance.status === 'pending_stop';
+  const isPendingDelete = instance.status === 'pending_delete';
+  const isStopped = instance.status === 'stopped' || instance.status === 'error';
+  const isRemoving = instance.status === 'removing';
   
+  const isLocked = isPendingStart || isPendingStop || isRemoving || isPendingDelete;
+
+  // --- ROLLING HISTORY REF ---
+  const xpHistoryRef = useRef<{time: number, exp: number}[]>([]);
   const onUpdateRef = useRef(onUpdate);
 
   useEffect(() => { onUpdateRef.current = onUpdate; }, [onUpdate]);
@@ -68,36 +77,23 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
         const currentExp = parseExp(getProp(lvl, ['current_exp', 'curr_exp', 'CurrentExp']));
         const now = Date.now();
         
-        if (currentExp > 0) {
-            // 1. Add current point to history
+        if (currentExp > 0 && isActive) {
             xpHistoryRef.current.push({ time: now, exp: currentExp });
-
-            // 2. Keep only last 70 seconds of history (Rolling Window)
-            // We need slightly more than 60s to find a good comparison point
             const cutoff = now - 70000;
             xpHistoryRef.current = xpHistoryRef.current.filter(p => p.time > cutoff);
 
-            // 3. Calculate Rate (XP Per Minute)
             if (xpHistoryRef.current.length >= 2) {
                 const newest = xpHistoryRef.current[xpHistoryRef.current.length - 1];
                 const oldest = xpHistoryRef.current[0];
-                
                 const timeDiffMs = newest.time - oldest.time;
                 const expDiff = newest.exp - oldest.exp;
 
-                // Only update rate if we have a valid time difference (> 5 seconds to avoid divide by zero spikes)
                 if (timeDiffMs > 5000) {
-                     // Normalize to 60 seconds (1 minute)
-                     // Formula: (XP Gained / Time Elapsed in Minutes)
                      const mins = timeDiffMs / 60000;
                      const calculatedRate = Math.floor(expDiff / mins);
-
-                     // Only show positive rates (ignore level up resets or glitches)
                      if (calculatedRate >= 0) {
                          const rateStr = String(calculatedRate);
                          setXpRate(rateStr);
-                         
-                         // Save to parent occasionally
                          if (Math.random() > 0.8) {
                              onUpdateRef.current(instance.id, { lastKnownRate: rateStr });
                          }
@@ -105,7 +101,6 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
                 }
             }
         }
-        
         setLevelData(lvl);
       }
     } catch (e) {
@@ -113,9 +108,8 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
     } finally {
         if (!isAutoRefresh) setIsRefreshing(false);
     }
-  }, [instance.targetUid, instance.id, levelApiUrl]);
+  }, [instance.targetUid, instance.id, levelApiUrl, isActive]);
 
-  // Load Profile Image
   useEffect(() => {
       let isMounted = true;
       const loadProfile = async () => {
@@ -131,17 +125,15 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
       return () => { isMounted = false; };
   }, [instance.targetUid, bannerApiUrl]);
 
-  // Load Data on Mount and Interval (12 Seconds)
   useEffect(() => {
     loadData(); 
-    const interval = setInterval(() => loadData(true), 12000); // 12 Seconds Auto-Refresh
+    const interval = setInterval(() => loadData(true), 12000); 
     return () => clearInterval(interval);
   }, [loadData]);
 
-  // Uptime Timer
   useEffect(() => {
-    if (instance.status !== 'active' && instance.status !== 'restarting') {
-        setUptime('--');
+    if (!isActive) {
+        setUptime(isPendingStart ? "Waiting for Admin..." : "--");
         return;
     }
     
@@ -166,7 +158,7 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
-  }, [instance.status, instance.startedTimestamp]);
+  }, [isActive, isPendingStart, instance.startedTimestamp]);
 
   const currentExp = parseExp(getProp(levelData, ['current_exp', 'curr_exp']));
   const startExp = parseExp(getProp(levelData, ['exp_for_current_level', 'start_exp']));
@@ -191,7 +183,6 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
   }
   if (isNaN(percent)) percent = 0;
   
-  // ETA Calculation based on Rolling Rate
   let etaDisplay = "--";
   const rateNum = parseInt(xpRate);
   
@@ -209,26 +200,37 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
 
   const formatNum = (num: number) => new Intl.NumberFormat('en-US').format(num);
   const neededDisplay = expNeeded > 0 ? expNeeded : (nextExp > currentExp ? nextExp - currentExp : 0);
-  const displayStatus = (instance.status || 'UNKNOWN').toUpperCase();
-  const isActive = instance.status === 'active' || instance.status === 'restarting';
-  const isStopped = instance.status === 'stopped' || instance.status === 'error';
-  const isRemoving = instance.status === 'removing';
+  
+  const displayStatus = 
+     isPendingStart ? 'WAITING START' : 
+     isPendingStop ? 'WAITING STOP' : 
+     isPendingDelete ? 'WAITING DELETE' :
+     (instance.status || 'UNKNOWN').toUpperCase();
 
   const speedDisplay = xpRate === "Calculating..." ? "Calc..." : xpRate;
   const showSpeedUnit = xpRate !== "Calculating..." && xpRate !== "Calc..." && xpRate !== "--";
 
+  const getLoginIcon = () => {
+    switch(instance.loginMethod) {
+        case 'facebook': return <Facebook size={10} className="text-blue-400" />;
+        case 'google': return <Chrome size={10} className="text-red-400" />;
+        case 'guest': default: return <UserIcon size={10} className="text-slate-400" />;
+    }
+  };
+
   return (
-    <div className="bg-[#111827] rounded-xl overflow-hidden border border-slate-800 shadow-xl font-sans flex flex-col h-full relative group hover:border-slate-700 transition-colors">
+    <div className={`bg-[#111827] rounded-xl overflow-hidden border shadow-xl font-sans flex flex-col h-full relative group hover:border-slate-700 transition-colors ${isLocked ? 'border-yellow-900/50' : 'border-slate-800'}`}>
       
       {/* Top Controls Row */}
       <div className="flex justify-between items-center p-3 border-b border-slate-800/80 bg-slate-900/50">
           <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${isActive ? 'text-green-500 bg-green-500' : 'text-red-500 bg-red-500'}`}></div>
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">FF LEVEL UP BOT</span>
+              <div className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${isActive ? 'text-green-500 bg-green-500' : isLocked ? 'text-yellow-500 bg-yellow-500' : 'text-red-500 bg-red-500'}`}></div>
+              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">STAR LEVEL UP</span>
           </div>
           <div className="flex items-center gap-2">
               <button 
-                onClick={() => onToggleSafeMode(instance.id, !instance.safeMode)}
+                onClick={() => !isLocked && onToggleSafeMode(instance.id, !instance.safeMode)}
+                disabled={isLocked}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold uppercase transition-all ${
                     instance.safeMode 
                     ? 'bg-green-500/10 border-green-500/30 text-green-400' 
@@ -236,13 +238,12 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
                 }`}
               >
                   {instance.safeMode ? <Shield size={12}/> : <ShieldAlert size={12}/>}
-                  Safe Mode: {instance.safeMode ? 'ON' : 'OFF'}
+                  Safe Mode
               </button>
               <button 
                 onClick={() => loadData(false)}
                 className="p-1 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/50 transition-all cursor-pointer"
                 disabled={isRefreshing}
-                title="Refresh Data Now"
               >
                   <RefreshCw size={12} className={isRefreshing ? "animate-spin" : ""} />
               </button>
@@ -280,16 +281,19 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
              <div className="flex-1 min-w-0">
                  <div className="text-sm font-bold text-white truncate">{displayName}</div>
                  <div className="flex items-center gap-2 mt-0.5">
-                     <span className="bg-slate-800 text-slate-400 text-[10px] px-1.5 py-0.5 rounded border border-slate-700 font-mono">
+                     <span className="bg-slate-800 text-slate-400 text-[10px] px-1.5 py-0.5 rounded border border-slate-700 font-mono flex items-center gap-1">
+                        {getLoginIcon()}
+                        <span className="opacity-50">|</span>
                         UID: {instance.targetUid}
                      </span>
                  </div>
              </div>
-             <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase border tracking-wide ${
-                 isActive 
-                 ? 'bg-green-500/10 border-green-500/20 text-green-400' 
-                 : 'bg-red-500/10 border-red-500/20 text-red-400'
+             <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase border tracking-wide flex items-center gap-1 ${
+                 isActive ? 'bg-green-500/10 border-green-500/20 text-green-400' : 
+                 isLocked ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' :
+                 'bg-red-500/10 border-red-500/20 text-red-400'
              }`}>
+                 {isLocked && <Clock size={10} className="animate-spin" />}
                  {displayStatus}
              </div>
           </div>
@@ -374,48 +378,55 @@ const InstanceCard: React.FC<InstanceCardProps> = ({
           <div className="grid grid-cols-4 gap-1.5 pt-1">
               <button 
                   onClick={() => onStart(instance.id, instance.targetUid)}
-                  disabled={isActive}
+                  disabled={isActive || isLocked}
                   className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all group/btn ${
-                      isActive 
-                      ? 'border-slate-800 text-slate-600 bg-slate-900/50 cursor-not-allowed' 
+                      isActive || isLocked
+                      ? 'border-slate-800 text-slate-600 bg-slate-900/50 cursor-not-allowed opacity-50' 
                       : 'border-green-500/30 text-green-400 hover:bg-green-500/10 hover:text-green-300 hover:border-green-500/50'
                   }`}
-                  title="Start Bot"
+                  title={isPendingStart ? "Waiting for Admin" : "Request Start"}
               >
-                  <Play size={14} className="fill-current mb-1" />
-                  <span className="text-[9px] font-bold uppercase">Start</span>
+                  {isPendingStart ? <Loader2 size={14} className="animate-spin mb-1" /> : <Play size={14} className="fill-current mb-1" />}
+                  <span className="text-[9px] font-bold uppercase">{isPendingStart ? "Waiting" : "Start"}</span>
               </button>
 
               <button 
                   onClick={() => onStop(instance.id, instance.targetUid)}
-                  disabled={isStopped}
+                  disabled={isStopped || isLocked}
                   className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all group/btn ${
-                      isStopped 
+                      isStopped || isLocked 
                       ? 'border-slate-800 text-slate-600 bg-slate-900/50 cursor-not-allowed' 
                       : 'border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300 hover:border-red-500/50'
                   }`}
-                  title="Stop Bot"
+                  title="Request Stop"
               >
                   <StopCircle size={14} className="mb-1" />
                   <span className="text-[9px] font-bold uppercase">Stop</span>
               </button>
 
               <button 
-                  onClick={() => onRestart(instance.id, instance.targetUid)}
-                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-white hover:border-blue-500/50 transition-all group/btn"
-                  title="Restart Bot"
+                  disabled
+                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-800 text-slate-600 bg-slate-900/50 cursor-not-allowed opacity-50"
+                  title="Restart Disabled"
               >
-                  <RotateCw size={14} className={`mb-1 group-hover/btn:text-blue-400 transition-colors ${instance.status === 'restarting' ? 'animate-spin' : ''}`} />
+                  <RotateCw size={14} className="mb-1" />
                   <span className="text-[9px] font-bold uppercase">Restart</span>
               </button>
 
               <button 
                   onClick={() => onDelete(instance.id, instance.targetUid)}
-                  className="flex flex-col items-center justify-center p-2 rounded-lg border border-slate-700 text-slate-400 hover:bg-red-900/20 hover:text-red-400 hover:border-red-900/50 transition-all group/btn"
-                  title="Delete Bot"
+                  disabled={isRemoving || isPendingDelete}
+                  className={`flex flex-col items-center justify-center p-2 rounded-lg border transition-all group/btn ${
+                    isRemoving || isPendingDelete
+                    ? 'border-slate-800 text-slate-600 bg-slate-900/50 cursor-not-allowed'
+                    : 'border-slate-700 text-slate-400 hover:bg-red-900/20 hover:text-red-400 hover:border-red-900/50'
+                  }`}
+                  title="Request Delete"
               >
-                  {isRemoving ? <Loader2 size={14} className="animate-spin mb-1" /> : <Trash2 size={14} className="mb-1" />}
-                  <span className="text-[9px] font-bold uppercase">Delete</span>
+                  {(isRemoving || isPendingDelete) ? <Loader2 size={14} className="animate-spin mb-1" /> : <Trash2 size={14} className="mb-1" />}
+                  <span className="text-[9px] font-bold uppercase">
+                      {isPendingDelete ? "Deleting..." : "Delete"}
+                  </span>
               </button>
           </div>
 

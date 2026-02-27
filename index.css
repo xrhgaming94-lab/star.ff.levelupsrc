@@ -1,0 +1,36 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-gaming-dark: #0f172a;
+  --color-gaming-panel: #1e293b;
+  --color-gaming-accent: #3b82f6;
+  --color-gaming-success: #22c55e;
+  --color-gaming-danger: #ef4444;
+  --color-gaming-neon: #00f0ff;
+}
+
+body {
+  background-color: var(--color-gaming-dark);
+  color: #e2e8f0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+.console-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.console-scroll::-webkit-scrollbar-track {
+  background: #0f172a; 
+}
+.console-scroll::-webkit-scrollbar-thumb {
+  background: #334155; 
+  border-radius: 4px;
+}
+.console-scroll::-webkit-scrollbar-thumb:hover {
+  background: #475569; 
+}

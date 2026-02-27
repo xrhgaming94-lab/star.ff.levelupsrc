@@ -15,8 +15,12 @@ const fetchWithTimeout = async (resource: string, options: RequestInit = {}, tim
         });
         clearTimeout(id);
         return response;
-    } catch (error) {
+    } catch (error: any) {
         clearTimeout(id);
+        // Provide a clearer error message for timeouts
+        if (error.name === 'AbortError' || controller.signal.aborted) {
+            throw new Error(`Request timed out after ${timeout / 1000}s. Please try again.`);
+        }
         throw error;
     }
 };
@@ -75,7 +79,8 @@ export const launchInstanceApi = async (targetUid: string, apiUrlPattern: string
     try { new URL(url); } catch (_) { throw new Error("Invalid API URL Configuration"); }
 
     console.log(`[Launch API] Requesting: ${url}`);
-    const response = await fetchWithTimeout(url, {}, 8000); 
+    // Increased timeout to 30 seconds to handle slow server responses
+    const response = await fetchWithTimeout(url, {}, 30000); 
     const text = await response.text();
     console.log(`[Launch API] Status: ${response.status}, Response: ${text}`);
     
@@ -99,7 +104,8 @@ export const deleteInstanceApi = async (targetUid: string, apiUrlPattern: string
     try { new URL(url); } catch (_) { throw new Error("Invalid API URL Configuration"); }
     
     console.log(`[Delete API] Requesting: ${url}`);
-    const response = await fetchWithTimeout(url, {}, 8000);
+    // Increased timeout to 30 seconds
+    const response = await fetchWithTimeout(url, {}, 30000);
     const text = await response.text();
     console.log(`[Delete API] Status: ${response.status}, Response: ${text}`);
 
@@ -117,7 +123,7 @@ export const deleteInstanceApi = async (targetUid: string, apiUrlPattern: string
 
 export const fetchProfileData = async (uid: string, apiUrlPattern?: string): Promise<any> => {
   // Construct the URL by replacing placeholder
-  const baseUrl = apiUrlPattern || "https://sagar-banner.vercel.app/profile?uid={uid}";
+  const baseUrl = apiUrlPattern || "https://sagar-banner1.vercel.app/profile?uid={uid}";
   const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
   
   // OPTIMIZATION 1: Instant Extension Check
@@ -140,7 +146,7 @@ export const fetchProfileData = async (uid: string, apiUrlPattern?: string): Pro
   for (const proxy of proxies) {
       try {
           const fetchUrl = getCacheBustedUrl(proxy(url));
-          const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 5000);
+          const response = await fetchWithTimeout(fetchUrl, { cache: 'no-store' }, 8000);
           
           if (response.ok) {
               const text = await response.text();
@@ -176,7 +182,7 @@ export const fetchProfileData = async (uid: string, apiUrlPattern?: string): Pro
 };
 
 export const fetchLevelInfo = async (uid: string, apiUrlPattern?: string): Promise<any> => {
-  const baseUrl = apiUrlPattern || "https://danger-level-info.vercel.app/level/{uid}";
+  const baseUrl = apiUrlPattern || "https://ttttttttt555-nine.vercel.app/level/{uid}";
   const url = baseUrl.replace(/{uid}/g, uid).replace(/{target_uid}/g, uid);
   
   // Robust CORS Handling: Try multiple strategies
@@ -197,7 +203,7 @@ export const fetchLevelInfo = async (uid: string, apiUrlPattern?: string): Promi
           const res = await fetchWithTimeout(cacheBustedUrl, { 
               cache: 'no-store',
               referrerPolicy: 'no-referrer'
-          }, 6000);
+          }, 8000);
           
           if (res.ok) {
               const txt = await res.text();

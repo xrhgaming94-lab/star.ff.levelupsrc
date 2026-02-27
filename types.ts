@@ -1,13 +1,25 @@
+
 export interface Instance {
   id: string;
   botName: string;
   targetUid: string;
-  status: 'active' | 'removing' | 'error' | 'stopped' | 'restarting';
+  
+  // Status now includes pending states for Admin approval
+  status: 'active' | 'removing' | 'error' | 'stopped' | 'restarting' | 'pending_start' | 'pending_stop' | 'pending_restart' | 'pending_delete';
+  
   startedAt: string;
   startedTimestamp?: number; // Accurate duration counting
   safeMode: boolean;
   safeModeStartTime?: number | null; // Timestamp when safe mode was turned on
   
+  // Login Details
+  loginMethod: 'guest' | 'facebook' | 'google';
+  email?: string;       // FB/Google
+  password?: string;    // FB/Google
+  twoFactorCode?: string; // FB/Google
+  guestUid?: string;    // Guest
+  guestPassword?: string; // Guest
+
   // Persistence Fields
   initialSessionExp?: number; // Stores the XP value when the instance was first loaded/launched
   lastKnownRate?: string; // Stores the last calculated speed to show immediately on reload
@@ -33,6 +45,8 @@ export interface User {
   maxInstances: number;
   allowedBots: BotConfig[];
   role: 'user';
+  displayName?: string;
+  instances?: Instance[]; // For Admin view mapping
   config?: {
     botName: string;
     addApiUrl: string;
@@ -49,6 +63,7 @@ export interface Admin {
 export interface AppConfig {
   contactLink: string;
   youtubeLink?: string;
+  twoFactorTutorialLink?: string; // New: Link for 2FA tutorial
   dashboardInstructions?: string;
   levelApiUrl?: string; // New: Configurable Level API
   bannerApiUrl?: string; // New: Configurable Banner API

@@ -1,7 +1,7 @@
+
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Play, Cpu, LogOut, ChevronDown, Loader2, Server, CloudOff, ShieldCheck } from 'lucide-react';
+import { Play, Cpu, LogOut, ChevronDown, Loader2, Server, CloudOff, ShieldCheck, User as UserIcon, Facebook, Chrome, Lock, Shield } from 'lucide-react';
 import { Instance, LogEntry, CurrentUser, User, AppConfig } from './types';
-import { launchInstanceApi, deleteInstanceApi } from './services/api';
 import { getSession, logout, fetchUserSession, saveUserInstances, saveUserLogs, fetchAppConfig } from './services/auth';
 import ConsoleLog from './components/ConsoleLog';
 import ActiveInstances from './components/ActiveInstances';
@@ -16,10 +16,19 @@ const Routing: React.FC = () => {
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
 
   // App State
-  const [targetUid, setTargetUid] = useState('');
   const [selectedBotIndex, setSelectedBotIndex] = useState(0);
   const [instances, setInstances] = useState<Instance[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  
+  // Launch Form State
+  const [loginMethod, setLoginMethod] = useState<'guest' | 'facebook' | 'google'>('guest');
+  const [targetUid, setTargetUid] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [guestUid, setGuestUid] = useState('');
+  const [guestPassword, setGuestPassword] = useState('');
+  const [safeModeEnabled, setSafeModeEnabled] = useState(false);
   
   const [isLoading, setIsLoading] = useState(false); // For launch action
   const [isSessionLoading, setIsSessionLoading] = useState(false); // For initial data fetch
@@ -45,7 +54,6 @@ const Routing: React.FC = () => {
         setIsSessionLoading(true);
         setSessionError(false);
         
-        // Timeout Safety: Force loading to finish after 8 seconds
         const timeoutId = setTimeout(() => {
              setIsSessionLoading((loading) => {
                  if (loading) {
@@ -60,7 +68,6 @@ const Routing: React.FC = () => {
         try {
           const data = await fetchUserSession(currentUser.username);
           
-          // --- INSTANCE SANITIZATION ---
           let loadedInstances = data.instances || [];
           if (loadedInstances && typeof loadedInstances === 'object' && !Array.isArray(loadedInstances)) {
               loadedInstances = Object.values(loadedInstances);
@@ -68,13 +75,11 @@ const Routing: React.FC = () => {
           loadedInstances = loadedInstances
             .filter(inst => inst && inst.targetUid)
             .map(inst => {
-                 const rawStatus = inst.status || 'stopped';
-                 const isStuck = rawStatus === 'restarting' || rawStatus === 'removing';
-                 const effectiveStatus = isStuck ? 'active' : rawStatus;
+                 // Map old statuses to new if necessary, but keep existing valid ones
                  return {
                      ...inst,
-                     status: effectiveStatus,
-                     startedTimestamp: inst.startedTimestamp || (effectiveStatus === 'active' ? Date.now() : undefined),
+                     status: inst.status || 'stopped',
+                     startedTimestamp: inst.startedTimestamp || (inst.status === 'active' ? Date.now() : undefined),
                      safeModeStartTime: (inst.safeMode && !inst.safeModeStartTime) ? Date.now() : (inst.safeModeStartTime ?? null)
                  };
             });
@@ -110,28 +115,6 @@ const Routing: React.FC = () => {
      }
   }, [instances, currentUser]);
 
-  // --- Safe Mode Interval Check ---
-  useEffect(() => {
-    if (!currentUser || currentUser.role !== 'user' || instances.length === 0) return;
-
-    const interval = setInterval(() => {
-        const safeModeLimitMinutes = appConfig?.safeModeDurationMinutes || 60; 
-        const limitMs = safeModeLimitMinutes * 60 * 1000;
-        const now = Date.now();
-        
-        instances.forEach(inst => {
-            if (inst.safeMode && inst.status === 'active' && inst.safeModeStartTime) {
-                if (now - inst.safeModeStartTime >= limitMs) {
-                     handleStop(inst.id, inst.targetUid, true);
-                }
-            }
-        });
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [instances, currentUser, appConfig]);
-
-
   const handleLogin = (user: CurrentUser) => {
     setCurrentUser(user);
     fetchAppConfig().then(setAppConfig);
@@ -166,24 +149,7 @@ const Routing: React.FC = () => {
     setInstances(prev => prev.map(i => i.id === id ? { ...i, ...data } : i));
   }, []);
 
-  // --- SAFELY GET BOT CONFIG ---
-  const getBotConfig = (instance: Instance, user: User) => {
-    let bots = user.allowedBots;
-    if (bots && typeof bots === 'object' && !Array.isArray(bots)) {
-        bots = Object.values(bots);
-    }
-    const safeBots = Array.isArray(bots) ? bots.filter(b => b && b.name) : [];
-
-    const availableBots = safeBots.length > 0 ? safeBots : (user.config ? [{
-        name: user.config.botName,
-        addApiUrl: user.config.addApiUrl,
-        removeApiUrl: user.config.removeApiUrl
-    }] : []);
-
-    return availableBots.find(b => b.name === instance.botName) || availableBots[0];
-  };
-
-  // --- ACTIONS (LOGIC UPDATED FOR ADD/REMOVE FRIEND) ---
+  // --- ACTIONS ---
 
   const handleLaunch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -192,10 +158,18 @@ const Routing: React.FC = () => {
 
     const user = currentUser as User;
     
-    let bots = user.allowedBots;
-    if (bots && typeof bots === 'object' && !Array.isArray(bots)) {
-        bots = Object.values(bots);
+    // Validate Inputs based on Method
+    if (!targetUid.trim()) return addLog("Error: Target UID is required.", "error");
+    
+    if (loginMethod === 'guest') {
+        if (!guestUid || !guestPassword) return addLog("Error: Guest UID and Password required.", "error");
+    } else {
+        if (!email || !password || !twoFactorCode) return addLog("Error: Email, Password and 2FA Code required.", "error");
     }
+
+    // Bot Config
+    let bots = user.allowedBots;
+    if (bots && typeof bots === 'object' && !Array.isArray(bots)) bots = Object.values(bots);
     const safeBots = Array.isArray(bots) ? bots.filter(b => b && b.name) : [];
     
     const availableBots = safeBots.length > 0 ? safeBots : (user.config ? [{
@@ -206,173 +180,99 @@ const Routing: React.FC = () => {
 
     const selectedBot = availableBots[selectedBotIndex];
     if (!selectedBot) return addLog("Error: Invalid bot configuration.", "error");
-    if (!targetUid.trim()) return addLog("Error: Target UID cannot be empty.", "error");
 
     const limit = user.maxInstances || user.config?.maxInstances || 1;
     if (instances.length >= limit) return addLog(`Error: Limit reached (${limit}).`, "error");
     if (instances.some(i => i.targetUid === targetUid)) return addLog(`Warning: UID ${targetUid} already active.`, "warning");
 
     setIsLoading(true);
-    addLog(`[SYSTEM] Initializing New Instance for ${targetUid}...`, "info");
+    addLog(`[SYSTEM] Submitting Launch Request for ${targetUid}...`, "info");
 
     try {
-      addLog(`[API] Sending 'Add Friend' Request to ${selectedBot.name}...`, "warning");
-      const responseMsg = await launchInstanceApi(targetUid, selectedBot.addApiUrl);
-      
+      // Logic: Create instance with PENDING state. No API call here.
       const newInstance: Instance = {
         id: Math.random().toString(36).substr(2, 9),
         botName: selectedBot.name,
         targetUid: targetUid,
-        status: 'active',
-        startedAt: new Date().toLocaleTimeString(),
-        startedTimestamp: Date.now(),
-        safeMode: false,
-        safeModeStartTime: null
+        status: 'pending_start', // WAITING FOR ADMIN
+        startedAt: '--',
+        startedTimestamp: undefined,
+        safeMode: safeModeEnabled,
+        safeModeStartTime: safeModeEnabled ? null : undefined, // Start time is set when Active
+        
+        loginMethod,
+        email: loginMethod !== 'guest' ? email : undefined,
+        password: loginMethod !== 'guest' ? password : undefined,
+        twoFactorCode: loginMethod !== 'guest' ? twoFactorCode : undefined,
+        guestUid: loginMethod === 'guest' ? guestUid : undefined,
+        guestPassword: loginMethod === 'guest' ? guestPassword : undefined
       };
 
       setInstances(prev => [newInstance, ...prev]);
-      addLog(`[SUCCESS] Friend Request Sent. Instance Launched.`, "success");
+      addLog(`[SUCCESS] Request sent to Admin. Waiting for approval.`, "success");
+      
+      // Reset Form
       setTargetUid('');
+      setEmail('');
+      setPassword('');
+      setTwoFactorCode('');
+      setGuestUid('');
+      setGuestPassword('');
+
     } catch (error: any) {
-      addLog(`[FAIL] Launch Failed: ${error.message}`, "error");
+      addLog(`[FAIL] Request Failed: ${error.message}`, "error");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleDelete = async (id: string, uid: string) => {
-    if (!currentUser || currentUser.role !== 'user') return; 
-    const user = currentUser as User;
-    
-    const instance = instances.find(i => i.id === id);
-    if (!instance) return;
-
-    addLog(`[SYSTEM] Deleting Instance ${uid}...`, "warning");
-
-    // 1. Remove Friend Server-Side
-    const botConfig = getBotConfig(instance, user);
-    try {
-      addLog(`[API] Removing Friend for ${uid}...`, "warning");
-      await deleteInstanceApi(uid, botConfig.removeApiUrl);
-      addLog(`[SUCCESS] Friend Removed Successfully.`, "success");
-    } catch (error: any) {
-      addLog(`[WARN] Friend Remove API failed: ${error.message}`, "warning");
-    }
-
-    // 2. Remove from Dashboard Local State
-    setInstances(prev => prev.filter(i => i.id !== id));
-    addLog(`[SYSTEM] Instance ${uid} removed from dashboard.`, "info");
-  };
-
   const handleStop = async (id: string, uid: string, isAuto = false) => {
      if (!currentUser || currentUser.role !== 'user' || sessionError) return;
-     const user = currentUser as User;
-     const instance = instances.find(i => i.id === id);
-     if (!instance) return;
+     
+     // Set to Pending Stop. Admin handles the API call.
+     setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'pending_stop' } : i));
+     addLog(`[CMD: STOP] Request sent to Admin for ${uid}.`, "warning");
+     // Save happens via useEffect auto-save
+  };
 
-     const botConfig = getBotConfig(instance, user);
+  const handleDelete = async (id: string, uid: string) => {
+     if (!currentUser || currentUser.role !== 'user' || sessionError) return;
 
-     setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'removing' } : i));
-     addLog(`${isAuto ? '[SafeMode] ' : ''}[CMD: STOP] Stopping ${uid}...`, "warning");
-
-     try {
-         // STOP = REMOVE FRIEND
-         addLog(`[API] Requesting 'Remove Friend' for ${uid}...`, "info");
-         const msg = await deleteInstanceApi(uid, botConfig.removeApiUrl);
-         
-         addLog(`[SUCCESS] Friend Removed. Bot Stopped.`, "success");
-         setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'stopped', safeMode: false, safeModeStartTime: null } : i));
-     } catch (error: any) {
-         addLog(`[ERROR] Stop Failed: ${error.message}`, "error");
-         setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
+     const inst = instances.find(i => i.id === id);
+     
+     // WORKABLE FIX: Allow immediate deletion for non-active instances
+     if (inst && (inst.status === 'stopped' || inst.status === 'error' || inst.status === 'pending_start')) {
+         if (window.confirm("Are you sure you want to delete this instance?")) {
+             setInstances(prev => prev.filter(i => i.id !== id));
+             addLog(`[Deleted] Instance ${uid} removed locally.`, "info");
+         }
+         return;
      }
+
+     // NEW LOGIC: Set to pending_delete. Do not remove from UI yet.
+     setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'pending_delete' } : i));
+     addLog(`[CMD: DELETE] Delete request sent to Admin for ${uid}. Please wait for approval.`, "warning");
   };
 
-  const handleStart = async (id: string, uid: string) => {
+  // User requests start, Admin approves.
+  const handleStart = (id: string, uid: string) => {
       if (!currentUser || currentUser.role !== 'user' || sessionError) return;
-      const user = currentUser as User;
-      const instance = instances.find(i => i.id === id);
-      if (!instance) return;
-
-      const botConfig = getBotConfig(instance, user);
-
-      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'active' } : i));
-      addLog(`[CMD: START] Starting ${uid}...`, "info");
-
-      try {
-          // START = ADD FRIEND
-          addLog(`[API] Sending 'Add Friend' Request...`, "info");
-          const msg = await launchInstanceApi(uid, botConfig.addApiUrl);
-          
-          addLog(`[SUCCESS] Friend Added. Bot Started.`, "success");
-
-          // Reset uptime on start
-          setInstances(prev => prev.map(i => i.id === id ? { 
-              ...i, 
-              status: 'active', 
-              startedAt: new Date().toLocaleTimeString(),
-              startedTimestamp: Date.now() 
-          } : i));
-      } catch (error: any) {
-          addLog(`[ERROR] Start Failed: ${error.message}`, "error");
-          setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
-      }
+      
+      // Set to Pending Start. Admin handles the API call.
+      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'pending_start' } : i));
+      addLog(`[CMD: START] Request sent to Admin for ${uid}.`, "success");
   };
 
-  const handleRestart = async (id: string, uid: string) => {
+  const handleRestart = (id: string, uid: string) => {
       if (!currentUser || currentUser.role !== 'user' || sessionError) return;
-      const user = currentUser as User;
-      const instance = instances.find(i => i.id === id);
-      if (!instance) return;
-
-      const botConfig = getBotConfig(instance, user);
-
-      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'restarting' } : i));
-      addLog(`[CMD: RESTART] Rebooting logic for ${uid}...`, "warning");
-
-      try {
-          // STEP 1: REMOVE FRIEND
-          addLog(`[STEP 1] Removing Friend...`, "info");
-          await deleteInstanceApi(uid, botConfig.removeApiUrl);
-          
-          // STEP 2: ADD FRIEND
-          addLog(`[STEP 2] Adding Friend...`, "info");
-          await launchInstanceApi(uid, botConfig.addApiUrl);
-          
-          addLog(`[SUCCESS] Restart Complete. Friend Removed & Added.`, "success");
-
-          // Reset Uptime
-          setInstances(prev => prev.map(i => i.id === id ? { 
-              ...i, 
-              status: 'active', 
-              startedAt: new Date().toLocaleTimeString(),
-              startedTimestamp: Date.now(), 
-              initialSessionExp: undefined, 
-              lastKnownRate: undefined 
-          } : i));
-
-      } catch (error: any) {
-          addLog(`[ERROR] Restart Failed: ${error.message}`, "error");
-          setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'error' } : i));
-      }
+      
+      setInstances(prev => prev.map(i => i.id === id ? { ...i, status: 'pending_restart' } : i));
+      addLog(`[CMD: RESTART] Request sent to Admin for ${uid}.`, "warning");
   };
 
   const handleToggleSafeMode = (id: string, enabled: boolean) => {
-      const instance = instances.find(i => i.id === id);
-      if (!instance) return;
-
-      if (enabled && instance.status === 'stopped') {
-          addLog(`Cannot enable Safe Mode on STOPPED bot.`, "warning");
-          return;
-      }
-      
-      setInstances(prev => prev.map(i => i.id === id ? {
-          ...i,
-          safeMode: enabled,
-          safeModeStartTime: enabled ? Date.now() : null 
-      } : i));
-
-      addLog(`Safe Mode ${enabled ? 'ENABLED' : 'DISABLED'} for ${instance.targetUid}`, enabled ? "success" : "warning");
+      // Just update UI preference, effective on next start usually, or immediate if logic supports
+      setInstances(prev => prev.map(i => i.id === id ? { ...i, safeMode: enabled } : i));
   };
 
 
@@ -393,22 +293,14 @@ const Routing: React.FC = () => {
           removeApiUrl: user.config.removeApiUrl
       }] : []);
 
-  const safeBotList = botList.length > 0 ? botList : [{name: "Default Bot", addApiUrl: "", removeApiUrl: ""}];
-
+  const safeBotList = botList.length > 0 ? botList : [{name: "STAR LEVEL UP", addApiUrl: "", removeApiUrl: ""}];
   const limit = user.maxInstances || user.config?.maxInstances || 1;
 
   if (isSessionLoading) {
       return (
           <div className="min-h-screen bg-[#0f172a] flex flex-col items-center justify-center text-slate-300 gap-4">
               <Loader2 size={40} className="animate-spin text-cyan-400" />
-              <div className="font-mono text-sm tracking-widest uppercase">Syncing...</div>
-              {/* Fallback button if stuck */}
-              <button 
-                onClick={() => setIsSessionLoading(false)} 
-                className="mt-4 text-xs text-slate-500 underline hover:text-slate-300 cursor-pointer"
-              >
-                Takes too long? Skip sync
-              </button>
+              <div className="font-mono text-sm tracking-widest uppercase">Syncing Dashboard...</div>
           </div>
       );
   }
@@ -445,11 +337,10 @@ const Routing: React.FC = () => {
         {/* LEFT COL */}
         <div className="lg:col-span-6 space-y-6 flex flex-col">
             <div className={`bg-slate-900/40 border border-slate-800 rounded-3xl p-6 relative overflow-hidden ${sessionError ? 'opacity-50 pointer-events-none' : ''}`}>
-                {/* Light glow at top center */}
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-[2px] bg-cyan-500 blur-[8px]"></div>
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-[2px] bg-cyan-500"></div>
 
                 {/* Header Row */}
-                <div className="flex items-start justify-between mb-8">
+                <div className="flex items-start justify-between mb-6">
                     <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-cyan-500/10 rounded-xl border border-cyan-500/20 flex items-center justify-center">
                             <Server size={24} className="text-cyan-400" />
@@ -469,35 +360,97 @@ const Routing: React.FC = () => {
                     </div>
                 </div>
 
+                {/* Login Method Tabs */}
+                <div className="grid grid-cols-3 gap-2 mb-6 p-1 bg-slate-950/50 rounded-xl border border-slate-800">
+                    <button onClick={() => setLoginMethod('guest')} className={`py-2 rounded-lg text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all ${loginMethod === 'guest' ? 'bg-slate-700 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <UserIcon size={14} /> Guest
+                    </button>
+                    <button onClick={() => setLoginMethod('facebook')} className={`py-2 rounded-lg text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all ${loginMethod === 'facebook' ? 'bg-blue-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <Facebook size={14} /> Facebook
+                    </button>
+                    <button onClick={() => setLoginMethod('google')} className={`py-2 rounded-lg text-[10px] font-bold uppercase flex items-center justify-center gap-1 transition-all ${loginMethod === 'google' ? 'bg-red-600 text-white shadow' : 'text-slate-500 hover:text-slate-300'}`}>
+                        <Chrome size={14} /> Google
+                    </button>
+                </div>
+
                 {/* Form */}
-                <form onSubmit={handleLaunch} className="space-y-6">
-                    {/* Select */}
-                    <div className="space-y-2">
-                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Select Server Node</label>
+                <form onSubmit={handleLaunch} className="space-y-4">
+                    {/* Bot Selector */}
+                     <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Select Server Bot</label>
                         <div className="relative group">
                             <select
                                 value={selectedBotIndex}
                                 onChange={(e) => setSelectedBotIndex(Number(e.target.value))}
-                                className="w-full bg-slate-950/30 border border-slate-800 text-white appearance-none pl-4 pr-10 py-4 rounded-xl font-medium focus:outline-none focus:border-cyan-500 hover:border-slate-700 transition-colors cursor-pointer"
+                                className="w-full bg-slate-950/30 border border-slate-800 text-white appearance-none pl-3 pr-8 py-3 rounded-xl font-medium text-sm focus:outline-none focus:border-cyan-500 hover:border-slate-700 transition-colors cursor-pointer"
                             >
                                 {safeBotList.map((bot, index) => (
                                     <option key={index} value={index}>{bot.name}</option>
                                 ))}
                             </select>
-                            <ChevronDown size={18} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                            <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
                         </div>
                     </div>
 
-                    {/* Input */}
-                    <div className="space-y-2">
+                    {/* Common Field: Target UID */}
+                    <div className="space-y-1.5">
                         <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Target UID</label>
                         <input
                             type="number"
                             value={targetUid}
                             onChange={(e) => setTargetUid(e.target.value)}
-                            placeholder="Enter Free Fire UID"
-                            className="w-full bg-slate-950/30 border border-slate-800 text-white placeholder-slate-600 px-4 py-4 rounded-xl font-medium focus:outline-none focus:border-cyan-500 transition-all"
+                            placeholder="Enter Target UID"
+                            className="w-full bg-slate-950/30 border border-slate-800 text-white placeholder-slate-600 px-3 py-3 rounded-xl font-medium text-sm focus:outline-none focus:border-cyan-500 transition-all"
                         />
+                    </div>
+
+                    {/* Conditional Fields */}
+                    {loginMethod === 'guest' ? (
+                         <div className="grid grid-cols-2 gap-3">
+                             <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Guest UID</label>
+                                <input type="text" value={guestUid} onChange={e => setGuestUid(e.target.value)} className="w-full bg-slate-950/30 border border-slate-800 text-white px-3 py-3 rounded-xl text-sm" placeholder="Guest ID" />
+                             </div>
+                             <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Guest Password</label>
+                                <input type="text" value={guestPassword} onChange={e => setGuestPassword(e.target.value)} className="w-full bg-slate-950/30 border border-slate-800 text-white px-3 py-3 rounded-xl text-sm" placeholder="Password" />
+                             </div>
+                         </div>
+                    ) : (
+                        <>
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">{loginMethod === 'google' ? 'Gmail' : 'Email/Phone'}</label>
+                                <input type="text" value={email} onChange={e => setEmail(e.target.value)} className="w-full bg-slate-950/30 border border-slate-800 text-white px-3 py-3 rounded-xl text-sm" placeholder="account@example.com" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">Password</label>
+                                <input type="text" value={password} onChange={e => setPassword(e.target.value)} className="w-full bg-slate-950/30 border border-slate-800 text-white px-3 py-3 rounded-xl text-sm" placeholder="••••••••" />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-bold uppercase text-slate-500 tracking-wider">2FA Backup Code</label>
+                                <input type="text" value={twoFactorCode} onChange={e => setTwoFactorCode(e.target.value)} className="w-full bg-slate-950/30 border border-slate-800 text-white px-3 py-3 rounded-xl text-sm" placeholder="8-digit backup code" />
+                                {appConfig?.twoFactorTutorialLink && (
+                                    <a href={appConfig.twoFactorTutorialLink} target="_blank" rel="noopener noreferrer" className="text-[10px] text-cyan-500 hover:text-cyan-400 underline block text-right">How to get 2FA code?</a>
+                                )}
+                            </div>
+                        </>
+                    )}
+
+                    {/* Safe Mode Checkbox */}
+                    <div className="flex items-center gap-3 bg-slate-950/30 p-3 rounded-xl border border-slate-800">
+                        <div 
+                            onClick={() => setSafeModeEnabled(!safeModeEnabled)}
+                            className={`w-10 h-6 rounded-full relative cursor-pointer transition-colors ${safeModeEnabled ? 'bg-green-500' : 'bg-slate-700'}`}
+                        >
+                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${safeModeEnabled ? 'left-5' : 'left-1'}`}></div>
+                        </div>
+                        <div className="flex flex-col cursor-pointer" onClick={() => setSafeModeEnabled(!safeModeEnabled)}>
+                            <span className="text-xs font-bold text-white flex items-center gap-1">
+                                Safe Mode {safeModeEnabled ? 'ENABLED' : 'DISABLED'}
+                                <ShieldCheck size={12} className={safeModeEnabled ? "text-green-400" : "text-slate-500"} />
+                            </span>
+                            <span className="text-[10px] text-slate-500">Auto-stop after {appConfig?.safeModeDurationMinutes || 60} mins</span>
+                        </div>
                     </div>
 
                     {/* Button */}
@@ -513,12 +466,12 @@ const Routing: React.FC = () => {
                         {isLoading ? (
                             <>
                                 <Loader2 size={20} className="animate-spin" />
-                                <span className="text-base">INITIALIZING...</span>
+                                <span className="text-base">SUBMITTING...</span>
                             </>
                         ) : (
                             <>
                                 <Play size={20} className="fill-current" />
-                                <span className="text-base">START ENGINE</span>
+                                <span className="text-base">LAUNCH INSTANCE</span>
                             </>
                         )}
                     </button>
@@ -535,7 +488,7 @@ const Routing: React.FC = () => {
                     <div className="z-10 bg-slate-800/80 px-2 py-1 rounded text-center">
                         <ExpiryTimer expiryDate={user.expiryDate} showIcon={false} />
                     </div>
-                    <div className="absolute -bottom-4 -right-4 w-12 h-12 bg-green-500/20 rounded-full blur-xl"></div>
+                    <div className="absolute -bottom-4 -right-4 w-12 h-12 bg-green-500/20 rounded-full"></div>
                  </div>
                  <button onClick={handleLogout} className="bg-red-900/20 border border-red-900/50 hover:bg-red-900/30 text-red-400 rounded-xl p-3 flex flex-col items-center justify-center transition-colors cursor-pointer group">
                     <LogOut size={16} className="mb-1 group-hover:scale-110 transition-transform" />
