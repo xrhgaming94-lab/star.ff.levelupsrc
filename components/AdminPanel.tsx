@@ -136,10 +136,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       try {
           const user = users.find(u => u.username === userObj.username);
           if (!user) throw new Error("User not found");
-          const botList = user.allowedBots;
-          const bot = botList.find(b => b.name === instance.botName) || botList[0];
+          
+          let botListRaw = user.allowedBots || [];
+          if (typeof botListRaw === 'object' && !Array.isArray(botListRaw)) {
+              botListRaw = Object.values(botListRaw);
+          }
+          const botList = Array.isArray(botListRaw) ? botListRaw : [];
+          const bot = botList.find(b => b && b.name === instance.botName) || botList[0];
+          
+          if (!bot || !bot.addApiUrl) throw new Error("Bot configuration or API URL is missing");
+          
           await launchInstanceApi(instance.targetUid, bot.addApiUrl);
-          const currentInstances = user.instances || [];
+          
+          let currentInstancesRaw = user.instances || [];
+          if (typeof currentInstancesRaw === 'object' && !Array.isArray(currentInstancesRaw)) {
+              currentInstancesRaw = Object.values(currentInstancesRaw);
+          }
+          const currentInstances = Array.isArray(currentInstancesRaw) ? currentInstancesRaw : [];
+          
           const updatedInstances = currentInstances.map(i => i.id === instance.id ? {
               ...i, 
               status: 'active' as const,
@@ -161,10 +175,24 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       try {
           const user = users.find(u => u.username === userObj.username);
           if (!user) throw new Error("User not found");
-          const botList = user.allowedBots;
-          const bot = botList.find(b => b.name === instance.botName) || botList[0];
+          
+          let botListRaw = user.allowedBots || [];
+          if (typeof botListRaw === 'object' && !Array.isArray(botListRaw)) {
+              botListRaw = Object.values(botListRaw);
+          }
+          const botList = Array.isArray(botListRaw) ? botListRaw : [];
+          const bot = botList.find(b => b && b.name === instance.botName) || botList[0];
+          
+          if (!bot || !bot.removeApiUrl) throw new Error("Bot configuration or API URL is missing");
+          
           await deleteInstanceApi(instance.targetUid, bot.removeApiUrl);
-          const currentInstances = user.instances || [];
+          
+          let currentInstancesRaw = user.instances || [];
+          if (typeof currentInstancesRaw === 'object' && !Array.isArray(currentInstancesRaw)) {
+              currentInstancesRaw = Object.values(currentInstancesRaw);
+          }
+          const currentInstances = Array.isArray(currentInstancesRaw) ? currentInstancesRaw : [];
+          
           const updatedInstances = currentInstances.map(i => i.id === instance.id ? {
               ...i, 
               status: 'stopped' as const,
@@ -185,8 +213,15 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
       try {
           const user = users.find(u => u.username === userObj.username);
           if (!user) throw new Error("User not found");
-          const botList = user.allowedBots;
-          const bot = botList.find(b => b.name === instance.botName) || botList[0];
+          
+          let botListRaw = user.allowedBots || [];
+          if (typeof botListRaw === 'object' && !Array.isArray(botListRaw)) {
+              botListRaw = Object.values(botListRaw);
+          }
+          const botList = Array.isArray(botListRaw) ? botListRaw : [];
+          const bot = botList.find(b => b && b.name === instance.botName) || botList[0];
+          
+          if (!bot || !bot.addApiUrl || !bot.removeApiUrl) throw new Error("Bot configuration or API URL is missing");
           
           // Stop first
           try {
@@ -198,7 +233,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
           // Then start
           await launchInstanceApi(instance.targetUid, bot.addApiUrl);
           
-          const currentInstances = user.instances || [];
+          let currentInstancesRaw = user.instances || [];
+          if (typeof currentInstancesRaw === 'object' && !Array.isArray(currentInstancesRaw)) {
+              currentInstancesRaw = Object.values(currentInstancesRaw);
+          }
+          const currentInstances = Array.isArray(currentInstancesRaw) ? currentInstancesRaw : [];
+          
           const updatedInstances = currentInstances.map(i => i.id === instance.id ? {
               ...i, 
               status: 'active' as const,
@@ -224,8 +264,13 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
 
       // Attempt to call the stop API before removing from DB
       try {
-        const botList = user.allowedBots;
-        const bot = botList.find(b => b.name === instanceToDelete.botName) || botList[0];
+        let botListRaw = user.allowedBots || [];
+        if (typeof botListRaw === 'object' && !Array.isArray(botListRaw)) {
+            botListRaw = Object.values(botListRaw);
+        }
+        const botList = Array.isArray(botListRaw) ? botListRaw : [];
+        const bot = botList.find(b => b && b.name === instanceToDelete.botName) || botList[0];
+        
         if (bot && bot.removeApiUrl) {
           await deleteInstanceApi(instanceToDelete.targetUid, bot.removeApiUrl);
         }
@@ -233,7 +278,12 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
         console.warn("API stop failed during deletion, continuing with DB removal", apiErr);
       }
 
-      const currentInstances = user.instances || [];
+      let currentInstancesRaw = user.instances || [];
+      if (typeof currentInstancesRaw === 'object' && !Array.isArray(currentInstancesRaw)) {
+          currentInstancesRaw = Object.values(currentInstancesRaw);
+      }
+      const currentInstances = Array.isArray(currentInstancesRaw) ? currentInstancesRaw : [];
+      
       const updatedInstances = currentInstances.filter(inst => inst.id !== instanceToDelete.id);
       
       // Optimistic update
@@ -369,7 +419,14 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ onLogout }) => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-700 text-sm">
-                        {users.flatMap(u => (u.instances || []).map(inst => ({user: u, inst}))).map(({user, inst}) => (
+                        {users.flatMap(u => {
+                            let insts = u.instances || [];
+                            if (typeof insts === 'object' && !Array.isArray(insts)) {
+                                insts = Object.values(insts);
+                            }
+                            const safeInsts = Array.isArray(insts) ? insts : [];
+                            return safeInsts.map(inst => ({user: u, inst}));
+                        }).map(({user, inst}) => (
                             <tr key={inst.id} className="hover:bg-white/5 transition-colors">
                                 <td className="p-4 font-bold text-slate-300">{user.displayName || user.username}</td>
                                 <td className="p-4 font-mono text-cyan-400">{inst.targetUid}</td>

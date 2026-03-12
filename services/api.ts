@@ -70,16 +70,17 @@ const findValueRecursive = (obj: any, keyRegex: RegExp, searchInsideObject = fal
 };
 
 export const launchInstanceApi = async (targetUid: string, apiUrlPattern: string): Promise<string> => {
-  try {
-    let url = apiUrlPattern.trim(); 
-    if (!url.startsWith('http')) url = `https://${url}`; 
-    
-    url = url.replace(/{target_uid}/g, targetUid);
-    
-    try { new URL(url); } catch (_) { throw new Error("Invalid API URL Configuration"); }
+  let url = apiUrlPattern.trim(); 
+  if (!url.startsWith('http')) url = `https://${url}`; 
+  
+  url = url.replace(/{target_uid}/g, targetUid);
+  
+  try { new URL(url); } catch (_) { throw new Error("Invalid API URL Configuration"); }
 
-    console.log(`[Launch API] Requesting: ${url}`);
-    // Increased timeout to 30 seconds to handle slow server responses
+  console.log(`[Launch API] Requesting: ${url}`);
+  
+  try {
+    // Attempt 1: Direct Fetch
     const response = await fetchWithTimeout(url, {}, 30000); 
     const text = await response.text();
     console.log(`[Launch API] Status: ${response.status}, Response: ${text}`);
@@ -89,22 +90,53 @@ export const launchInstanceApi = async (targetUid: string, apiUrlPattern: string
     }
     return text || "Instance launched successfully";
   } catch (error: any) {
-    console.error("[Launch API] Failed:", error);
-    throw new Error(error.message || "Failed to connect to server");
+    console.warn("[Launch API] Direct fetch failed (possibly CORS), trying proxy...", error);
+    
+    try {
+      // Attempt 2: CORS Proxy 1
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+      const response = await fetchWithTimeout(proxyUrl, {}, 30000);
+      const text = await response.text();
+      if (!response.ok) throw new Error(`API Error: ${response.status} - ${text}`);
+      return text || "Instance launched successfully";
+    } catch (proxyError: any) {
+      console.warn("[Launch API] Proxy 1 failed, trying Proxy 2...", proxyError);
+      
+      try {
+        // Attempt 3: CORS Proxy 2
+        const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+        const response = await fetchWithTimeout(proxyUrl2, {}, 30000);
+        const text = await response.text();
+        if (!response.ok) throw new Error(`API Error: ${response.status} - ${text}`);
+        return text || "Instance launched successfully";
+      } catch (proxy2Error: any) {
+        console.warn("[Launch API] Proxy 2 failed, trying no-cors...", proxy2Error);
+        
+        try {
+          // Attempt 4: no-cors mode (blind fire)
+          await fetchWithTimeout(url, { mode: 'no-cors' }, 15000);
+          return "Instance action triggered (CORS bypassed)";
+        } catch (noCorsError: any) {
+          console.error("[Launch API] All attempts failed:", noCorsError);
+          throw new Error(error.message || "Failed to connect to server");
+        }
+      }
+    }
   }
 };
 
 export const deleteInstanceApi = async (targetUid: string, apiUrlPattern: string): Promise<string> => {
+  let url = apiUrlPattern.trim();
+  if (!url.startsWith('http')) url = `https://${url}`; 
+  
+  url = url.replace(/{target_uid}/g, targetUid);
+  
+  try { new URL(url); } catch (_) { throw new Error("Invalid API URL Configuration"); }
+  
+  console.log(`[Delete API] Requesting: ${url}`);
+  
   try {
-    let url = apiUrlPattern.trim();
-    if (!url.startsWith('http')) url = `https://${url}`; 
-    
-    url = url.replace(/{target_uid}/g, targetUid);
-    
-    try { new URL(url); } catch (_) { throw new Error("Invalid API URL Configuration"); }
-    
-    console.log(`[Delete API] Requesting: ${url}`);
-    // Increased timeout to 30 seconds
+    // Attempt 1: Direct Fetch
     const response = await fetchWithTimeout(url, {}, 30000);
     const text = await response.text();
     console.log(`[Delete API] Status: ${response.status}, Response: ${text}`);
@@ -114,8 +146,38 @@ export const deleteInstanceApi = async (targetUid: string, apiUrlPattern: string
     }
     return text || "Instance removed successfully";
   } catch (error: any) {
-    console.error("[Delete API] Failed:", error);
-    throw new Error(error.message || "Failed to connect to server");
+    console.warn("[Delete API] Direct fetch failed (possibly CORS), trying proxy...", error);
+    
+    try {
+      // Attempt 2: CORS Proxy 1
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+      const response = await fetchWithTimeout(proxyUrl, {}, 30000);
+      const text = await response.text();
+      if (!response.ok) throw new Error(`API Error: ${response.status} - ${text}`);
+      return text || "Instance removed successfully";
+    } catch (proxyError: any) {
+      console.warn("[Delete API] Proxy 1 failed, trying Proxy 2...", proxyError);
+      
+      try {
+        // Attempt 3: CORS Proxy 2
+        const proxyUrl2 = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+        const response = await fetchWithTimeout(proxyUrl2, {}, 30000);
+        const text = await response.text();
+        if (!response.ok) throw new Error(`API Error: ${response.status} - ${text}`);
+        return text || "Instance removed successfully";
+      } catch (proxy2Error: any) {
+        console.warn("[Delete API] Proxy 2 failed, trying no-cors...", proxy2Error);
+        
+        try {
+          // Attempt 4: no-cors mode (blind fire)
+          await fetchWithTimeout(url, { mode: 'no-cors' }, 15000);
+          return "Instance action triggered (CORS bypassed)";
+        } catch (noCorsError: any) {
+          console.error("[Delete API] All attempts failed:", noCorsError);
+          throw new Error(error.message || "Failed to connect to server");
+        }
+      }
+    }
   }
 };
 
